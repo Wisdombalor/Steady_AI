@@ -308,6 +308,19 @@ export function DeleteSheet({ onConfirm, onCancel, title }) {
   );
 }
 
+// Generic "are you sure?" step before a major action (log out, etc.).
+export function ConfirmSheet({ title, body, confirmLabel, danger, onConfirm, onCancel }) {
+  return (
+    <>
+      <h2>{title}</h2>
+      {body ? <p className="mu">{body}</p> : null}
+      <button className="btn" style={danger ? { background: "var(--bad)" } : null} onClick={onConfirm}>{confirmLabel || "Confirm"}</button>
+      <br /><br />
+      <button className="btn sec" onClick={onCancel}>Cancel</button>
+    </>
+  );
+}
+
 const POST_REASONS = ["Gambling promotion","Harassment","Self-harm content","Spam","Other"];
 const USER_REASONS = ["Harassment","Impersonation","Spam","Harmful content","Other"];
 
@@ -523,6 +536,7 @@ export function AiSheet({ store, update }) {
   const [view, setView] = useState("thread");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(null);
   const boxRef = useRef(null);
 
   const active = chats.find((c) => c.id === activeId) || null;
@@ -570,6 +584,7 @@ export function AiSheet({ store, update }) {
   const delChat = (id) => {
     update((prev) => ({ chats: (prev.chats || []).filter((c) => c.id !== id) }));
     if (id === activeId) { setActiveId(null); setView("list"); }
+    setConfirmDel(null);
   };
 
   if (view === "list") {
@@ -587,7 +602,14 @@ export function AiSheet({ store, update }) {
                 <b className="chat-title">{c.title || "Conversation"}</b>
                 <span className="mu">Day {c.days} · {new Date(c.created).toLocaleDateString()} · {c.msgs.length} messages</span>
               </button>
-              <button className="mu" style={{ textDecoration: "underline", padding: 8 }} onClick={() => delChat(c.id)}>Delete</button>
+              {confirmDel === c.id ? (
+                <span style={{ display: "flex", gap: 4, flex: "none" }}>
+                  <button className="mu" style={{ color: "var(--bad)", textDecoration: "underline", padding: 8 }} onClick={() => delChat(c.id)}>Confirm</button>
+                  <button className="mu" style={{ textDecoration: "underline", padding: 8 }} onClick={() => setConfirmDel(null)}>Keep</button>
+                </span>
+              ) : (
+                <button className="mu" style={{ textDecoration: "underline", padding: 8 }} onClick={() => setConfirmDel(c.id)}>Delete</button>
+              )}
             </div>
           ))}
           {!chats.length && <p className="mu">No conversations yet. Start one below.</p>}

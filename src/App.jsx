@@ -16,7 +16,7 @@ import {
   UrgeSheet, HubSheet, ActsSheet, CallSheet, TrustSheet, RulesSheet, PostSheet,
   FiltersSheet, DeleteSheet, ReportSheet, RequestSheet, RelapseSheet, WipeSheet,
   CheckSheet, SelfCheckSheet, SelfResult, ReassessSheet, ReassessResult, AiSheet, SetPwSheet,
-  ProfileSheet,
+  ProfileSheet, ConfirmSheet,
 } from "./components/Sheets";
 
 function stageFor(days) {
@@ -159,38 +159,43 @@ export default function App() {
         });
         sub = data?.subscription;
         // Google redirect lands back here with ?code=... (or ?error=...).
-        // Finish the exchange explicitly so a failure shows a message on the
-        // landing page instead of silently stranding the user there.
+        // supabase-js exchanges the code itself (detectSessionInUrl); we only
+        // watch for the resulting session so a failure shows a message on the
+        // landing page instead of silently stranding the user there. Never
+        // exchange explicitly here: a second exchange burns the single-use
+        // code and fails the login ("Unable to exchange external code").
         const q = new URLSearchParams(window.location.search);
         if (q.has("code") || q.has("error") || q.has("error_description")) {
           const cleanUrl = () => {
             try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch {}
           };
-          try {
-            setOauthNote({ kind: "pending", text: "Completing Google sign-in…" });
-            if (q.get("error")) throw new Error(q.get("error_description") || q.get("error") || "Google sign-in was cancelled.");
-            const { data: s0 } = await a.auth.getSession();
-            if (s0?.session?.user) {
-              await handleUser(s0.session.user, true);
-            } else {
-              const { data: ex, error: exErr } = await a.auth.exchangeCodeForSession(window.location.href);
-              if (exErr) throw exErr;
-              if (ex?.session?.user) await handleUser(ex.session.user, true);
-            }
-            setOauthNote(null);
+          if (q.get("error")) {
+            // "Unable to exchange external code" means Google refused the
+            // handoff at Supabase's callback (redirect URI / client secret
+            // misconfigured) — retrying can't fix that, so say so plainly.
+            const desc = q.get("error_description") || q.get("error") || "";
+            const cfg = /exchange external code|invalid client|redirect_?uri/i.test(desc);
+            setOauthNote({ kind: "error", text: cfg
+              ? "Google couldn't complete the handoff. The app owner needs to check the Google sign-in configuration (redirect URI + client secret in Supabase)."
+              : "Google sign-in didn't complete (" + desc + "). Please try again." });
             cleanUrl();
-          } catch (e) {
-            // The auto-detect may have won a race and signed us in anyway.
-            try {
-              const { data: re } = await a.auth.getSession();
-              if (re?.session?.user) {
-                await handleUser(re.session.user, true);
-                setOauthNote(null);
-                cleanUrl();
-                return;
-              }
-            } catch {}
-            setOauthNote({ kind: "error", text: "Google sign-in didn't complete (" + (e?.message || "unknown error") + "). Please try again." });
+          } else {
+            setOauthNote({ kind: "pending", text: "Completing Google sign-in…" });
+            let done = false;
+            for (let i = 0; i < 20 && !done; i++) {
+              try {
+                const { data: s } = await a.auth.getSession();
+                if (s?.session?.user) {
+                  await handleUser(s.session.user, true);
+                  setOauthNote(null);
+                  done = true;
+                }
+              } catch {}
+              if (!done) await new Promise((r) => setTimeout(r, 500));
+            }
+            if (!done) {
+              setOauthNote({ kind: "error", text: "Google sign-in didn't complete. The link may have expired — please try again." });
+            }
             cleanUrl();
           }
         }
@@ -230,6 +235,9 @@ export default function App() {
     try {
       const s = storeRef.current;
       await syncProfile(u, { displayName: n, avatarUrl: s.avatar, bio: s.bio });
+    } catch {}
+    // Independent lookup: a profile-sync hiccup must never block the role check.
+    try {
       setMod(await getModState(u.id));
     } catch {}
     if (!fresh) return;
@@ -505,10 +513,19 @@ export default function App() {
               Your private recovery data on this device is untouched.
             </p>
             <p className="mu">If you think this is a mistake, contact Steady Support from the login screen or reply to any email from the team.</p>
-            <button className="btn sec" onClick={actions.logout}>Sign out</button>
+            <button className="btn sec" onClick={() => open("confirmLogout")}>Sign out</button>
           </div>
         </main>
         <nav id="nav" />
+        <Sheet open={sheet?.name === "confirmLogout"} onClose={close}>
+          <ConfirmSheet
+            title="Log out?"
+            body="You can log back in anytime with the same account."
+            confirmLabel="Log out"
+            onConfirm={() => { close(); actions.logout(); }}
+            onCancel={close}
+          />
+        </Sheet>
       </div>
     );
   }
@@ -581,6 +598,15 @@ export default function App() {
         {sheet?.name === "req" && <RequestSheet store={store} update={update} actions={sheetActions} />}
         {sheet?.name === "relapse" && <RelapseSheet onNew={newPeriod} onClose={close} />}
         {sheet?.name === "wipe" && <WipeSheet onConfirm={wipeAll} onCancel={close} />}
+        {sheet?.name === "confirmLogout" && (
+          <ConfirmSheet
+            title="Log out?"
+            body="You can log back in anytime with the same account."
+            confirmLabel="Log out"
+            onConfirm={() => { close(); actions.logout(); }}
+            onCancel={close}
+          />
+        )}
         {sheet?.name === "check" && <CheckSheet store={store} update={update} actions={sheetActions} />}
         {sheet?.name === "selfcheck" && <SelfCheckSheet onDone={(score) => { update({ test: score }); setSelfScore(score); open("selfresult"); }} />}
         {sheet?.name === "selfresult" && <SelfResult score={selfScore ?? store.test} done={store.done} actions={sheetActions} />}

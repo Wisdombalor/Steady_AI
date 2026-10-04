@@ -26,6 +26,7 @@ async function logAudit(adminId, action, targetType, targetId, prev, next) {
 
 export function AdminApp({ user, mod, path, store, update, onAuth, authMode, setAuthMode, onExit, onSignOut, refreshMod }) {
   const [checking, setChecking] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [mode, setMode] = useState("login");
   if (!user) {
     return (
@@ -62,13 +63,24 @@ export function AdminApp({ user, mod, path, store, update, onAuth, authMode, set
               <b>Finish admin setup</b>
               <p className="mu">This email is listed as an owner, but the database flag isn&apos;t set yet. Run this in the Supabase SQL Editor, then check again:</p>
               <p className="mu" style={{ wordBreak: "break-all" }}><code>update public.profiles set is_admin = true where email = &apos;{user.email}&apos;;</code></p>
+              <p className="mu">Make sure it reports 1 row updated, not 0. If it says 0 rows, the stored email doesn&apos;t match — use your user ID instead:</p>
+              <p className="mu" style={{ wordBreak: "break-all" }}><code>update public.profiles set is_admin = true where user_id = &apos;{user.id}&apos;;</code></p>
               <button className="btn sec" disabled={checking} onClick={async () => { setChecking(true); try { await refreshMod?.(); } catch {} setChecking(false); }}>
                 {checking ? "Checking…" : "I've run it — check again"}
               </button>
             </div>
           ) : null}
           <button className="btn sec" onClick={onExit}>← Back to Steady</button>
-          <button className="btn sec" style={{ marginTop: 8 }} onClick={onSignOut}>Sign out</button>
+          {confirmSignOut ? (
+            <div className="card" style={{ marginTop: 8 }}>
+              <b>Log out?</b>
+              <p className="mu">You can log back in anytime with the same account.</p>
+              <button className="btn" onClick={onSignOut}>Log out</button>
+              <button className="btn sec" style={{ marginTop: 8 }} onClick={() => setConfirmSignOut(false)}>Cancel</button>
+            </div>
+          ) : (
+            <button className="btn sec" style={{ marginTop: 8 }} onClick={() => setConfirmSignOut(true)}>Sign out</button>
+          )}
         </div>
       </div>
     );
@@ -276,7 +288,7 @@ function ReportsPage({ adminId }) {
           <p style={{ margin: "6px 0" }}>{r.reason}</p>
           <p className="mu" style={{ margin: 0 }}>
             Reported {r.type === "post" ? (r.reported_display_name || "a post") : modName(r.reported_user_id)} ·
-            by {r.reporter_id ? modName(r.reporter_id) : "guest"} · {new Date(r.created_at).toLocaleString()}
+            by {r.reporter_id ? modName(r.reporter_id) : <span className="pill mut">guest</span>} · {new Date(r.created_at).toLocaleString()}
           </p>
           <button className="btn sec" style={{ marginTop: 8 }} onClick={() => (openId === r.id ? setOpenId(null) : open(r))}>
             {openId === r.id ? "Close" : "Open report"}
@@ -350,20 +362,23 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
 function PostsPage({ adminId }) {
   const [id, setId] = useState("");
   const [found, setFound] = useState(null);
-  const [removed, setRemoved] = useState([]);
+  const [browse, setBrowse] = useState([]);
+  const [fStatus, setFStatus] = useState("all");
   const [author, setAuthor] = useState(null);
   const [postReports, setPostReports] = useState([]);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
 
-  const loadRemoved = async () => {
+  const loadBrowse = async (status) => {
     try {
-      const { data, error } = await supabase().from("posts").select("*").eq("status", "removed").order("created_at", { ascending: false }).limit(20);
+      let q = supabase().from("posts").select("*").order("created_at", { ascending: false }).limit(50);
+      if (status !== "all") q = q.eq("status", status);
+      const { data, error } = await q;
       if (error) throw error;
-      setRemoved(data || []);
+      setBrowse(data || []);
     } catch (e) { setErr(dbErr(e)); }
   };
-  useEffect(() => { loadRemoved(); }, []);
+  useEffect(() => { loadBrowse(fStatus); }, [fStatus]);
 
   const lookup = async () => {
     setErr(""); setMsg(""); setFound(null); setAuthor(null); setPostReports([]);
@@ -387,7 +402,7 @@ function PostsPage({ adminId }) {
       if (error) throw error;
       const warn = await logAudit(adminId, `post.${status}`, "post", p.id, prev, status);
       setFound((f) => (f && f.id === p.id ? { ...f, status } : f));
-      setRemoved((rs) => status === "removed" ? [{ ...p, status }, ...rs] : rs.filter((x) => x.id !== p.id));
+      await loadBrowse(fStatus);
       setMsg(`Post ${status}.` + (warn ? ` (audit warning: ${warn})` : ""));
     } catch (e) { setErr(dbErr(e)); }
   };
@@ -423,9 +438,12 @@ function PostsPage({ adminId }) {
           {postReports.length > 0 && <p className="mu">{postReports.length} report(s) on this post: {postReports.map((r) => `${r.reason} (${r.status})`).join("; ")}</p>}
         </>
       )}
-      <h2>Recently removed</h2>
-      {removed.map((p) => <Card key={p.id} p={p} />)}
-      {!removed.length && !err && <p className="mu">No removed posts.</p>}
+      <h2>Browse all posts</h2>
+      <p className="mu">Status</p>
+      <Chips options={["all", "active", "hidden", "removed"]} value={fStatus} onPick={setFStatus} />
+      <p className="mu">{browse.length} post(s), newest first</p>
+      {browse.map((p) => <Card key={p.id} p={p} />)}
+      {!browse.length && !err && <p className="mu">No posts with this status.</p>}
     </>
   );
 }

@@ -128,9 +128,12 @@ export async function createReport({ reporterId, kind, reason, details, post, us
     row.reported_user_id = isUuid(userId) ? userId : null;
     row.reported_display_name = userName || null;
   }
-  const { data, error } = await a.from("reports").insert(row).select("id").single();
+  // Insert only, no returning select: reading reports back is admin-only
+  // under RLS, so chaining .select() would fail for guests and normal users
+  // even though the report itself was filed.
+  const { error } = await a.from("reports").insert(row);
   if (error) throw error;
-  return data;
+  return true;
 }
 
 // Append to the admin moderation log. Throws when the caller lacks admin rights.

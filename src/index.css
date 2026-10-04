@@ -99,7 +99,7 @@ ol{padding-left:20px;margin:8px 0}li{margin-bottom:6px}
 .st{opacity:0;animation:up 400ms var(--ease) forwards}@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible,#sheet:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 @media(min-width:768px){#sheet{left:auto;top:0;bottom:0;width:440px;max-height:none;border-radius:28px 0 0 28px;transform:translateX(100%)}#sheet:before{display:none}}
-@media(min-width:900px){#app{flex-direction:row-reverse}main{padding:44px 40px}nav{flex-direction:column;width:210px;border-top:0;border-right:1px solid var(--line);padding:32px 14px;gap:4px}nav button{display:flex;align-items:center;gap:12px;flex:none;text-align:left;font-size:15px;padding:12px 14px;border-radius:12px;min-height:48px}nav button.on{background:var(--bg2)}nav i{margin:0}}
+@media(min-width:900px){#app{flex-direction:row-reverse}main{padding:44px 40px}nav{flex-direction:column;width:210px;border-top:0;padding:32px 14px;gap:4px}nav button{display:flex;align-items:center;gap:12px;flex:none;text-align:left;font-size:15px;padding:12px 14px;border-radius:12px;min-height:48px}nav button.on{background:var(--bg2)}nav i{margin:0}}
 .nav-foot{display:none}
 @media(min-width:900px){.nav-foot{display:block;margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
 .nav-profile{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 12px;border-radius:12px;min-height:56px}

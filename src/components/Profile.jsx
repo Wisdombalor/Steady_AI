@@ -127,7 +127,7 @@ export function Profile({ store, update, actions, authed, userId }) {
           <div style={{ marginTop: 14 }}>
             <button className="btn sec" onClick={startEdit}>Edit profile</button>
             {store.email && (
-              <button className="btn sec" onClick={() => actions.logout()} style={{ marginTop: 8 }}>Log out</button>
+              <button className="btn sec" onClick={() => actions.open("confirmLogout")} style={{ marginTop: 8 }}>Log out</button>
             )}
           </div>
         </div>

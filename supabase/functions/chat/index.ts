@@ -58,6 +58,8 @@ Deno.serve(async (req) => {
 
     const delays = [1200, 2500];
     let reply = "";
+    let lastStatus = 0;
+    let lastError = "";
 
     for (let attempt = 0; attempt <= delays.length; attempt++) {
       try {
@@ -72,6 +74,11 @@ Deno.serve(async (req) => {
         });
 
         const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          lastStatus = res.status;
+          const e = data?.error;
+          lastError = String(typeof e === "string" ? e : (e?.message || JSON.stringify(e) || "")).slice(0, 200);
+        }
         const parts = data?.candidates?.[0]?.content?.parts;
         if (Array.isArray(parts)) {
           reply = parts.filter((p: any) => typeof p?.text === "string").map((p: any) => p.text).join("").trim();
@@ -89,12 +96,16 @@ Deno.serve(async (req) => {
     }
 
     // Honest offline signal: the app labels this so users never mistake
-    // a saved response for a fresh one.
+    // a saved response for a fresh one. The reason code + server log line
+    // below are what diagnose a stuck fallback (400 = bad key,
+    // 404 = model not available, 429 = quota exhausted).
     if (!reply) {
-      return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true });
+      console.error(`[chat] gemini failed status=${lastStatus} err=${lastError}`);
+      return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true, reason: lastStatus ? `gemini_${lastStatus}` : "gemini_empty" });
     }
     return json({ reply });
-  } catch (_) {
-    return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true });
+  } catch (e) {
+    console.error(`[chat] exception ${String(e).slice(0, 200)}`);
+    return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true, reason: "exception" });
   }
 });
