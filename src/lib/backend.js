@@ -33,7 +33,10 @@ export async function loadPosts(user) {
     user ? a.from("posts").select("*").order("created_at", { ascending: false }).limit(100) : Promise.resolve({ data: [] }),
   ]);
   if (pub.error) throw pub.error;
-  const ids = new Set((own.data || []).map((x) => x.id));
+  // Ownership is decided per-row by author id. (The `own` query can also
+  // return other people's public posts via the community read policy, so
+  // membership in its result must NOT imply ownership.)
+  const uid = user?.id || null;
   const mp = new Map();
   const m = (x, v) => ({
     id: x.id,
@@ -42,7 +45,7 @@ export async function loadPosts(user) {
     d: new Date(x.created_at).getTime(),
     stage: x.stage,
     n: x.display_name,
-    mine: ids.has(x.id),
+    mine: !!uid && x.user_id != null && x.user_id === uid,
     au: x.user_id ?? null,
     av: x.avatar_url ?? null,
     bio: x.bio ?? null,

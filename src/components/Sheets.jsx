@@ -264,11 +264,10 @@ export function PostSheet({ store, user, onPost, actions }) {
       <label>Who can see this?
         <select value={v} onChange={(e) => { setV(e.target.value); setNeedsAuth(false); setErr(""); }}>
           <option value="me">Only me</option>
-          <option value="com">Community</option>
-          <option value="anon">Community, anonymously</option>
+          <option value="com">Public</option>
         </select>
       </label>
-      <p className="mu">Anonymous hides your name. Steady may still store account information.</p>
+      <p className="mu">Public posts show your name to the whole community. Only me stays on this device.</p>
       <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
       <button className="btn" disabled={busy} onClick={submit}>{busy ? "Posting…" : "Post"}</button>
       {needsAuth && !user && actions && (

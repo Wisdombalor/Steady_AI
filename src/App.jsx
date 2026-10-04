@@ -75,7 +75,7 @@ export default function App() {
   });
   const [sheet, setSheet] = useState(null);
   const [modal, setModal] = useState(null);
-  const [filters, setFilters] = useState({ time: "all", stage: "all" });
+  const [filters, setFilters] = useState({ time: "all", stage: "all", mine: false });
   const [urgeDraft, setUrgeDraft] = useState(null);
   const [actIndex, setActIndex] = useState(0);
   const [actDone, setActDone] = useState(0);
@@ -400,7 +400,7 @@ export default function App() {
         const a = supabase();
         await insertPost(a, {
           user_id: user.id,
-          body: text, visibility: visibility === "me" ? "private" : visibility === "anon" ? "anon" : "community",
+          body: text, visibility: visibility === "me" ? "private" : "community",
           stage, display_name: store.name,
           _av: store.avatar || null, _bio: store.bio || null, _days: daysSince(store.start),
         });
@@ -423,14 +423,14 @@ export default function App() {
     return null;
   };
 
-  // Switch an own post between Only me, Anonymous and Public.
+  // Switch an own post between Only me (private) and Public (community).
   // Returns an error string, or null on success.
   const setPostVisibility = async (post, visibility) => {
-    const v = visibility === "me" ? "me" : visibility === "com" ? "com" : "anon";
+    const v = visibility === "com" ? "com" : "me";
     update((prev) => ({ posts: prev.posts.map((p) => (p.id === post.id ? { ...p, v } : p)) }));
     if (user && !String(post.id).startsWith("p")) {
       try {
-        const { error } = await supabase().from("posts").update({ visibility: v === "me" ? "private" : v === "com" ? "community" : "anon" }).eq("id", post.id);
+        const { error } = await supabase().from("posts").update({ visibility: v === "com" ? "community" : "private" }).eq("id", post.id);
         if (error) throw error;
         await refreshPosts();
       } catch (e) {
@@ -462,7 +462,7 @@ export default function App() {
       setUser(null);
     }
     resetStore();
-    setFilters({ time: "all", stage: "all" });
+    setFilters({ time: "all", stage: "all", mine: false });
     setTab("home"); setOb(0); setAuthMode("start"); close();
   };
 
