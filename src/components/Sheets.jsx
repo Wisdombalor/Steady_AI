@@ -295,28 +295,28 @@ export function FiltersSheet({ filters, setFilters, onApply }) {
   );
 }
 
-export function DeleteSheet({ onConfirm, onCancel, title }) {
+export function DeleteSheet({ onConfirm, onCancel, title, body }) {
   return (
-    <>
+    <div className="confirm-in">
       <h2>{title ?? "Delete this post?"}</h2>
-      <p className="mu">This cannot be undone.</p>
-      <button className="btn" style={{ background: "var(--bad)" }} onClick={onConfirm}>Delete</button>
+      <p className="mu">{body ?? "It will be permanently removed. This cannot be undone."}</p>
+      <button className="btn" style={{ background: "var(--bad)" }} onClick={onConfirm}>Yes, delete</button>
       <br /><br />
       <button className="btn sec" onClick={onCancel}>Cancel</button>
-    </>
+    </div>
   );
 }
 
 // Generic "are you sure?" step before a major action (log out, etc.).
 export function ConfirmSheet({ title, body, confirmLabel, danger, onConfirm, onCancel }) {
   return (
-    <>
+    <div className="confirm-in">
       <h2>{title}</h2>
       {body ? <p className="mu">{body}</p> : null}
       <button className="btn" style={danger ? { background: "var(--bad)" } : null} onClick={onConfirm}>{confirmLabel || "Confirm"}</button>
       <br /><br />
       <button className="btn sec" onClick={onCancel}>Cancel</button>
-    </>
+    </div>
   );
 }
 
@@ -366,7 +366,7 @@ export function ReportSheet({ target, reporterId, blocked, store, update, action
         <button key={r} className="btn sec" style={{ marginBottom: 8 }} onClick={() => setPending(r)}>{r}</button>
       ))}
       {pending && (
-        <div className="card" style={{ marginTop: 4 }}>
+        <div className="card confirm-in" style={{ marginTop: 4 }}>
           <b>Report for “{pending}”?</b>
           <p className="mu" style={{ margin: "4px 0 8px" }}>
             {isPost ? "The moderation team will review this post." : "The moderation team will review this user."}
@@ -446,14 +446,19 @@ export function RelapseSheet({ onNew, onClose }) {
 }
 
 export function WipeSheet({ onConfirm, onCancel }) {
+  const [ack, setAck] = useState(false);
   return (
-    <>
+    <div className="confirm-in">
       <h2>Delete all your data?</h2>
       <p className="mu">Your name, recovery dates, urge history, posts and contacts will be removed from this device. This cannot be undone.</p>
-      <button className="btn" style={{ background: "var(--bad)" }} onClick={onConfirm}>Delete everything</button>
+      <label className="ack">
+        <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
+        <span>I understand my data will be permanently deleted.</span>
+      </label>
+      <button className="btn" style={{ background: "var(--bad)", opacity: ack ? 1 : 0.5 }} disabled={!ack} onClick={onConfirm}>Delete everything</button>
       <br /><br />
       <button className="btn sec" onClick={onCancel}>Cancel</button>
-    </>
+    </div>
   );
 }
 

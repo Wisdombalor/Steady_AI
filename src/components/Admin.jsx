@@ -159,18 +159,19 @@ function Pill({ v }) {
   return <span className={"pill " + cls}>{v}</span>;
 }
 
-// Every admin action is two-tap: arm, then confirm. Nothing fires on one tap.
-function ConfirmBtn({ children, onConfirm, danger }) {
+// Every admin action is two-tap: arm, then confirm with an explicit verb.
+// Nothing fires on one tap.
+function ConfirmBtn({ children, verb, onConfirm, danger }) {
   const [armed, setArmed] = useState(false);
   if (!armed) return <button className="chip" onClick={() => setArmed(true)}>{children}</button>;
   return (
-    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+    <span className="confirm-in" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
       <button
         className="chip"
         style={danger ? { borderColor: "var(--bad)", color: "var(--bad)" } : null}
         onClick={() => { setArmed(false); onConfirm(); }}
       >
-        Confirm
+        {verb || "Confirm"}
       </button>
       <button className="chip" onClick={() => setArmed(false)}>Cancel</button>
     </span>
@@ -341,9 +342,9 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
             <p className="mu" style={{ margin: 0 }}>{new Date(post.created_at).toLocaleString()} · {post.stage} · {post.visibility}</p>
             <div className="row" style={{ marginTop: 8 }}>
               <span>
-                <ConfirmBtn danger onConfirm={() => onPost(post, "hidden")}>Hide</ConfirmBtn>{" "}
-                <ConfirmBtn danger onConfirm={() => onPost(post, "removed")}>Remove</ConfirmBtn>{" "}
-                <ConfirmBtn onConfirm={() => onPost(post, "active")}>Restore</ConfirmBtn>
+                <ConfirmBtn danger verb="Yes, hide" onConfirm={() => onPost(post, "hidden")}>Hide</ConfirmBtn>{" "}
+                <ConfirmBtn danger verb="Yes, remove" onConfirm={() => onPost(post, "removed")}>Remove</ConfirmBtn>{" "}
+                <ConfirmBtn verb="Yes, restore" onConfirm={() => onPost(post, "active")}>Restore</ConfirmBtn>
               </span>
             </div>
           </div>
@@ -358,10 +359,10 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
       {authorId && (
         <div className="row">
           <span>
-            <ConfirmBtn onConfirm={() => onUser(authorId, "warn")}>Warn</ConfirmBtn>{" "}
-            <ConfirmBtn danger onConfirm={() => onUser(authorId, "suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
-            <ConfirmBtn danger onConfirm={() => onUser(authorId, "banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
-            <ConfirmBtn onConfirm={() => onUser(authorId, "restored", { status: "active" })}>Restore</ConfirmBtn>
+            <ConfirmBtn verb="Yes, warn" onConfirm={() => onUser(authorId, "warn")}>Warn</ConfirmBtn>{" "}
+            <ConfirmBtn danger verb="Yes, suspend" onConfirm={() => onUser(authorId, "suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
+            <ConfirmBtn danger verb="Yes, ban" onConfirm={() => onUser(authorId, "banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
+            <ConfirmBtn verb="Yes, restore" onConfirm={() => onUser(authorId, "restored", { status: "active" })}>Restore</ConfirmBtn>
           </span>
         </div>
       )}
@@ -369,7 +370,7 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
       <div className="row">
         <span>
           {["reviewed", "resolved", "dismissed"].map((s) => (
-            <span key={s}><ConfirmBtn onConfirm={() => onStatus(s)}>Mark {s}</ConfirmBtn>{" "}</span>
+            <span key={s}><ConfirmBtn verb={`Yes, mark ${s}`} onConfirm={() => onStatus(s)}>Mark {s}</ConfirmBtn>{" "}</span>
           ))}
         </span>
       </div>
@@ -432,9 +433,9 @@ function PostsPage({ adminId }) {
       <p className="mu" style={{ margin: 0 }}>author {String(p.user_id || "?").slice(0, 8)}… · {p.id} · {new Date(p.created_at).toLocaleString()}</p>
       <div className="row" style={{ marginTop: 8 }}>
         <span>
-          <ConfirmBtn danger onConfirm={() => setStatus(p, "hidden")}>Hide</ConfirmBtn>{" "}
-          <ConfirmBtn danger onConfirm={() => setStatus(p, "removed")}>Remove</ConfirmBtn>{" "}
-          <ConfirmBtn onConfirm={() => setStatus(p, "active")}>Restore</ConfirmBtn>
+          <ConfirmBtn danger verb="Yes, hide" onConfirm={() => setStatus(p, "hidden")}>Hide</ConfirmBtn>{" "}
+          <ConfirmBtn danger verb="Yes, remove" onConfirm={() => setStatus(p, "removed")}>Remove</ConfirmBtn>{" "}
+          <ConfirmBtn verb="Yes, restore" onConfirm={() => setStatus(p, "active")}>Restore</ConfirmBtn>
         </span>
       </div>
     </div>
@@ -481,16 +482,20 @@ function UsersPage({ adminId }) {
     try {
       const a = supabase();
       let res;
-      if (/^[0-9a-f-]{8,}/i.test(q.trim())) {
+      if (!q.trim()) {
+        res = await a.from("profiles").select("*").order("created_at", { ascending: false }).limit(50);
+      } else if (/^[0-9a-f-]{8,}/i.test(q.trim())) {
         res = await a.from("profiles").select("*").eq("user_id", q.trim()).limit(5);
       } else {
         res = await a.from("profiles").select("*").ilike("display_name", `%${q.trim()}%`).limit(20);
       }
       if (res.error) throw res.error;
       setList(res.data || []);
-      if (!(res.data || []).length) setErr("No users found.");
+      if (!(res.data || []).length) setErr(q.trim() ? "No users found." : "No users yet.");
     } catch (e) { setErr(dbErr(e)); }
   };
+  // Show everyone upfront; search narrows it down.
+  useEffect(() => { search(); }, []);
 
   const openUser = async (u) => {
     setSel(u);
@@ -533,7 +538,7 @@ function UsersPage({ adminId }) {
       {err && <div className="card"><b>Error</b><p className="mu">{err}</p></div>}
       {msg && <p style={{ color: "var(--ac)", fontSize: 14, fontWeight: 600 }}>{msg}</p>}
       <div className="row" style={{ gap: 8 }}>
-        <input placeholder="Search name or user ID" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") search(); }} style={{ flex: 1, margin: 0 }} />
+        <input placeholder="Search name or user ID (empty shows all)" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") search(); }} style={{ flex: 1, margin: 0 }} />
         <button className="chip on" onClick={search} style={{ flex: "none" }}>Search</button>
       </div>
       {list.map((u) => (
@@ -549,10 +554,10 @@ function UsersPage({ adminId }) {
           {sel.bio ? <p>{sel.bio}</p> : null}
           <div className="row">
             <span>
-              <ConfirmBtn onConfirm={() => act("warn")}>Warn</ConfirmBtn>{" "}
-              <ConfirmBtn danger onConfirm={() => act("suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
-              <ConfirmBtn danger onConfirm={() => act("banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
-              <ConfirmBtn onConfirm={() => act("restored", { status: "active" })}>Restore</ConfirmBtn>
+              <ConfirmBtn verb="Yes, warn" onConfirm={() => act("warn")}>Warn</ConfirmBtn>{" "}
+              <ConfirmBtn danger verb="Yes, suspend" onConfirm={() => act("suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
+              <ConfirmBtn danger verb="Yes, ban" onConfirm={() => act("banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
+              <ConfirmBtn verb="Yes, restore" onConfirm={() => act("restored", { status: "active" })}>Restore</ConfirmBtn>
             </span>
           </div>
           <h2>Posts ({posts.length})</h2>

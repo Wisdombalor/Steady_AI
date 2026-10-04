@@ -166,7 +166,8 @@ export default function App() {
           if (session?.user) {
             // Fresh sign-ins navigate home; silent token refreshes must not
             // yank the user out of what they're doing.
-            await handleUser(session.user, ev !== "TOKEN_REFRESHED");
+            const returning = ev === "INITIAL_SESSION" || (ev === "SIGNED_IN" && isReturningUser(session.user));
+            await handleUser(session.user, ev !== "TOKEN_REFRESHED", returning);
           } else if (ev === "INITIAL_SESSION") {
             refreshPosts();
           }
@@ -200,7 +201,7 @@ export default function App() {
               try {
                 const { data: s } = await a.auth.getSession();
                 if (s?.session?.user) {
-                  await handleUser(s.session.user, true);
+                  await handleUser(s.session.user, true, isReturningUser(s.session.user));
                   setOauthNote(null);
                   done = true;
                 }
@@ -220,7 +221,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleUser = async (u, fresh = true) => {
+  // returning = this account existed before this sign-in (login form,
+  // restored session, older OAuth account). Returners without synced progress
+  // skip to recovery setup (ob 2) instead of redoing full onboarding.
+  const handleUser = async (u, fresh = true, returning = false) => {
     setUser(u);
     try {
       const a = supabase();
@@ -230,7 +234,7 @@ export default function App() {
         const keep = { posts: storeRef.current.posts, outbox: storeRef.current.outbox };
         const next = migrate({ ...freshStore(), ...d, ...keep, checks: d.checks || [] });
         replaceAll(next);
-        if (!next.done) setOb(1);
+        if (!next.done) setOb(returning ? 2 : 1);
       } else if (storeRef.current.done) doPush();
     } catch {}
     try {
@@ -257,7 +261,15 @@ export default function App() {
     } catch {}
     if (!fresh) return;
     if (storeRef.current.done) { close(); setTab("home"); }
-    else setOb(1);
+    else setOb(returning ? 2 : 1);
+  };
+
+  // Accounts older than this at sign-in count as returning (not fresh signups).
+  const isReturningUser = (u) => {
+    try {
+      const c = new Date(u?.created_at || 0).getTime();
+      return !!c && (Date.now() - c > 120000);
+    } catch { return false; }
   };
 
   const onAuth = async (cmd) => {
@@ -286,7 +298,7 @@ export default function App() {
         try {
           const r = await a.auth.signInWithPassword({ email: cmd.login.email, password: cmd.login.password });
           if (r.error) throw r.error;
-          await handleUser(r.data.user);
+          await handleUser(r.data.user, true, true);
         } catch (e) {
           if (/not confirmed|email not confirmed/i.test(e?.message || "")) return "UNCONFIRMED:" + cmd.login.email;
           throw e;
