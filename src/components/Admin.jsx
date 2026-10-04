@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { supabase, writeAudit } from "../lib/backend";
 import { ADMIN_EMAILS } from "../lib/data";
 import { Login, Signup } from "./Onboarding";
-import { Chips } from "./Chrome";
+import { Chips, Sheet } from "./Chrome";
+import { ConfirmSheet } from "./Sheets";
 
 const NAV = [["/", "Dashboard"], ["/reports", "Reports"], ["/posts", "Posts"], ["/users", "Users"], ["/history", "History"]];
 
@@ -28,6 +29,10 @@ export function AdminApp({ user, mod, path, store, update, onAuth, authMode, set
   const [checking, setChecking] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [mode, setMode] = useState("login");
+  // Pending admin decision: rendered in a bottom sheet on mobile and a side
+  // sheet on large screens (the shared Sheet primitive handles both).
+  const [confirm, setConfirm] = useState(null);
+  const ask = (cfg) => setConfirm(cfg);
   if (!user) {
     return (
       <div className="in">
@@ -99,11 +104,23 @@ export function AdminApp({ user, mod, path, store, update, onAuth, authMode, set
         ))}
       </div>
       {page === "dash" && <DashboardPage />}
-      {page === "reports" && <ReportsPage adminId={user.id} />}
-      {page === "posts" && <PostsPage adminId={user.id} />}
-      {page === "users" && <UsersPage adminId={user.id} />}
+      {page === "reports" && <ReportsPage adminId={user.id} ask={ask} />}
+      {page === "posts" && <PostsPage adminId={user.id} ask={ask} />}
+      {page === "users" && <UsersPage adminId={user.id} ask={ask} />}
       {page === "history" && <HistoryPage />}
       {!(["dash", "reports", "posts", "users", "history"].includes(page)) && <p className="mu">That admin page doesn&apos;t exist. Pick one above.</p>}
+      <Sheet open={!!confirm} onClose={() => setConfirm(null)}>
+        {confirm && (
+          <ConfirmSheet
+            title={confirm.title}
+            body={confirm.body}
+            confirmLabel={confirm.verb}
+            danger={confirm.danger}
+            onConfirm={() => { const run = confirm.run; setConfirm(null); run(); }}
+            onCancel={() => setConfirm(null)}
+          />
+        )}
+      </Sheet>
     </div>
   );
 }
@@ -159,22 +176,22 @@ function Pill({ v }) {
   return <span className={"pill " + cls}>{v}</span>;
 }
 
-// Every admin action is two-tap: arm, then confirm with an explicit verb.
-// Nothing fires on one tap.
-function ConfirmBtn({ children, verb, onConfirm, danger }) {
-  const [armed, setArmed] = useState(false);
-  if (!armed) return <button className="chip" onClick={() => setArmed(true)}>{children}</button>;
+// Admin decisions confirm in a bottom sheet (mobile) / side sheet (desktop).
+// The tap only opens the sheet; nothing fires until the sheet's verb button.
+function ConfirmBtn({ children, verb, title, body, danger, onConfirm, ask }) {
   return (
-    <span className="confirm-in" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-      <button
-        className="chip"
-        style={danger ? { borderColor: "var(--bad)", color: "var(--bad)" } : null}
-        onClick={() => { setArmed(false); onConfirm(); }}
-      >
-        {verb || "Confirm"}
-      </button>
-      <button className="chip" onClick={() => setArmed(false)}>Cancel</button>
-    </span>
+    <button
+      className="chip"
+      onClick={() => ask({
+        title: title || "Are you sure?",
+        body: body || "This action will be logged in the moderation history.",
+        verb: verb || "Confirm",
+        danger: !!danger,
+        run: onConfirm,
+      })}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -187,7 +204,7 @@ async function fetchProfiles(ids) {
   return new Map((data || []).map((p) => [p.user_id, p]));
 }
 
-function ReportsPage({ adminId }) {
+function ReportsPage({ adminId, ask }) {
   const [reports, setReports] = useState([]);
   const [names, setNames] = useState(new Map());
   const [fs, setFs] = useState("all");
@@ -314,7 +331,7 @@ function ReportsPage({ adminId }) {
           </button>
           {openId === r.id && (
             <ReportDetail
-              r={r} detail={detail} modName={modName}
+              r={r} detail={detail} modName={modName} ask={ask}
               onStatus={(s) => setStatus(r, s)}
               onPost={(p, s) => postAction(r, p, s)}
               onUser={(id, a, p) => userAction(id, a, p)}
@@ -327,7 +344,7 @@ function ReportsPage({ adminId }) {
   );
 }
 
-function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
+function ReportDetail({ r, detail, modName, onStatus, onPost, onUser, ask }) {
   if (!detail) return <p className="mu">Loading context…</p>;
   const { post, author, subject } = detail;
   const authorId = r.reported_user_id || post?.user_id || null;
@@ -342,9 +359,9 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
             <p className="mu" style={{ margin: 0 }}>{new Date(post.created_at).toLocaleString()} · {post.stage} · {post.visibility}</p>
             <div className="row" style={{ marginTop: 8 }}>
               <span>
-                <ConfirmBtn danger verb="Yes, hide" onConfirm={() => onPost(post, "hidden")}>Hide</ConfirmBtn>{" "}
-                <ConfirmBtn danger verb="Yes, remove" onConfirm={() => onPost(post, "removed")}>Remove</ConfirmBtn>{" "}
-                <ConfirmBtn verb="Yes, restore" onConfirm={() => onPost(post, "active")}>Restore</ConfirmBtn>
+                <ConfirmBtn danger verb="Yes, hide" title="Hide this post?" body="It leaves the community feed but can be restored. This is logged." ask={ask} onConfirm={() => onPost(post, "hidden")}>Hide</ConfirmBtn>{" "}
+                <ConfirmBtn danger verb="Yes, remove" title="Remove this post?" body="It is taken down from the community. This is logged and can be undone by restoring." ask={ask} onConfirm={() => onPost(post, "removed")}>Remove</ConfirmBtn>{" "}
+                <ConfirmBtn verb="Yes, restore" title="Restore this post?" body="It reappears in the community feed. This is logged." ask={ask} onConfirm={() => onPost(post, "active")}>Restore</ConfirmBtn>
               </span>
             </div>
           </div>
@@ -359,10 +376,10 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
       {authorId && (
         <div className="row">
           <span>
-            <ConfirmBtn verb="Yes, warn" onConfirm={() => onUser(authorId, "warn")}>Warn</ConfirmBtn>{" "}
-            <ConfirmBtn danger verb="Yes, suspend" onConfirm={() => onUser(authorId, "suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
-            <ConfirmBtn danger verb="Yes, ban" onConfirm={() => onUser(authorId, "banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
-            <ConfirmBtn verb="Yes, restore" onConfirm={() => onUser(authorId, "restored", { status: "active" })}>Restore</ConfirmBtn>
+            <ConfirmBtn verb="Yes, warn" title="Warn this user?" body="Their warning count goes up by one. This is logged." ask={ask} onConfirm={() => onUser(authorId, "warn")}>Warn</ConfirmBtn>{" "}
+            <ConfirmBtn danger verb="Yes, suspend" title="Suspend this user?" body="They can't post or file reports until restored. This is logged." ask={ask} onConfirm={() => onUser(authorId, "suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
+            <ConfirmBtn danger verb="Yes, ban" title="Ban this user?" body="Their account is deactivated. This is logged." ask={ask} onConfirm={() => onUser(authorId, "banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
+            <ConfirmBtn verb="Yes, restore" title="Restore this user?" body="Their account becomes active again. This is logged." ask={ask} onConfirm={() => onUser(authorId, "restored", { status: "active" })}>Restore</ConfirmBtn>
           </span>
         </div>
       )}
@@ -370,7 +387,7 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
       <div className="row">
         <span>
           {["reviewed", "resolved", "dismissed"].map((s) => (
-            <span key={s}><ConfirmBtn verb={`Yes, mark ${s}`} onConfirm={() => onStatus(s)}>Mark {s}</ConfirmBtn>{" "}</span>
+            <span key={s}><ConfirmBtn verb={`Yes, mark ${s}`} title={`Mark report ${s}?`} body={`This report moves to ${s}. This is logged.`} ask={ask} onConfirm={() => onStatus(s)}>Mark {s}</ConfirmBtn>{" "}</span>
           ))}
         </span>
       </div>
@@ -378,7 +395,7 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
   );
 }
 
-function PostsPage({ adminId }) {
+function PostsPage({ adminId, ask }) {
   const [id, setId] = useState("");
   const [found, setFound] = useState(null);
   const [browse, setBrowse] = useState([]);
@@ -433,9 +450,9 @@ function PostsPage({ adminId }) {
       <p className="mu" style={{ margin: 0 }}>author {String(p.user_id || "?").slice(0, 8)}… · {p.id} · {new Date(p.created_at).toLocaleString()}</p>
       <div className="row" style={{ marginTop: 8 }}>
         <span>
-          <ConfirmBtn danger verb="Yes, hide" onConfirm={() => setStatus(p, "hidden")}>Hide</ConfirmBtn>{" "}
-          <ConfirmBtn danger verb="Yes, remove" onConfirm={() => setStatus(p, "removed")}>Remove</ConfirmBtn>{" "}
-          <ConfirmBtn verb="Yes, restore" onConfirm={() => setStatus(p, "active")}>Restore</ConfirmBtn>
+          <ConfirmBtn danger verb="Yes, hide" title="Hide this post?" body="It leaves the community feed but can be restored. This is logged." ask={ask} onConfirm={() => setStatus(p, "hidden")}>Hide</ConfirmBtn>{" "}
+          <ConfirmBtn danger verb="Yes, remove" title="Remove this post?" body="It is taken down from the community. This is logged and can be undone by restoring." ask={ask} onConfirm={() => setStatus(p, "removed")}>Remove</ConfirmBtn>{" "}
+          <ConfirmBtn verb="Yes, restore" title="Restore this post?" body="It reappears in the community feed. This is logged." ask={ask} onConfirm={() => setStatus(p, "active")}>Restore</ConfirmBtn>
         </span>
       </div>
     </div>
@@ -467,7 +484,7 @@ function PostsPage({ adminId }) {
   );
 }
 
-function UsersPage({ adminId }) {
+function UsersPage({ adminId, ask }) {
   const [q, setQ] = useState("");
   const [list, setList] = useState([]);
   const [sel, setSel] = useState(null);
@@ -554,10 +571,10 @@ function UsersPage({ adminId }) {
           {sel.bio ? <p>{sel.bio}</p> : null}
           <div className="row">
             <span>
-              <ConfirmBtn verb="Yes, warn" onConfirm={() => act("warn")}>Warn</ConfirmBtn>{" "}
-              <ConfirmBtn danger verb="Yes, suspend" onConfirm={() => act("suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
-              <ConfirmBtn danger verb="Yes, ban" onConfirm={() => act("banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
-              <ConfirmBtn verb="Yes, restore" onConfirm={() => act("restored", { status: "active" })}>Restore</ConfirmBtn>
+              <ConfirmBtn verb="Yes, warn" title="Warn this user?" body="Their warning count goes up by one. This is logged." ask={ask} onConfirm={() => act("warn")}>Warn</ConfirmBtn>{" "}
+              <ConfirmBtn danger verb="Yes, suspend" title="Suspend this user?" body="They can't post or file reports until restored. This is logged." ask={ask} onConfirm={() => act("suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
+              <ConfirmBtn danger verb="Yes, ban" title="Ban this user?" body="Their account is deactivated. This is logged." ask={ask} onConfirm={() => act("banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
+              <ConfirmBtn verb="Yes, restore" title="Restore this user?" body="Their account becomes active again. This is logged." ask={ask} onConfirm={() => act("restored", { status: "active" })}>Restore</ConfirmBtn>
             </span>
           </div>
           <h2>Posts ({posts.length})</h2>
