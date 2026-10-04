@@ -6,6 +6,7 @@ export const freshStore = () => ({
   name: "",
   bio: "",
   avatar: "",
+  chats: [],
   start: 0,
   spend: 0,
   cc: undefined,

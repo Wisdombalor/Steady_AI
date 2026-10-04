@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { TabIcon } from "./Icons";
+import { useEffect, useState } from "react";
+import { TabIcon, EyeIcon, EyeOffIcon } from "./Icons";
 
 const TABS = [["home","Home"],["rec","Recovery"],["com","Community"],["sup","Support"],["pro","Profile"]];
 
@@ -63,6 +63,24 @@ export function Modal({ data, onClose }) {
         <button className="btn st" style={{ animationDelay: "740ms" }} onClick={onClose}>Let&apos;s go</button>
       </div>
     </div>
+  );
+}
+
+export function PasswordInput(props) {
+  const [show, setShow] = useState(false);
+  return (
+    <span className="pw-wrap">
+      <input {...props} type={show ? "text" : "password"} />
+      <button
+        type="button"
+        className="pw-toggle"
+        aria-label={show ? "Hide password" : "Show password"}
+        onClick={() => setShow(!show)}
+        tabIndex={-1}
+      >
+        {show ? <EyeOffIcon /> : <EyeIcon />}
+      </button>
+    </span>
   );
 }
 

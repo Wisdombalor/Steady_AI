@@ -175,7 +175,16 @@ export const CCD = { NG: "NGN", GH: "GHS", KE: "KES", ZA: "ZAR", GB: "GBP", US: 
   KR: "KRW", CN: "CNY", TW: "TWD", HK: "HKD", TH: "THB", ID: "IDR", PK: "PKR", BD: "BDT", SA: "SAR", AE: "AED",
   IL: "ILS", EG: "EGP", ET: "ETB", UG: "UGX", TZ: "TZS", RW: "RWF", XX: "USD" };
 
+// Supabase connection: env vars win when present (local .env + Vercel env),
+// otherwise the built-in project values apply so the app works out of the box.
+const ENV = (typeof import.meta !== "undefined" && import.meta.env) || {};
 export const SB_CONF = {
-  url: "https://atjidzxkzivzrxxbjprt.supabase.co",
-  key: "sb_publishable_ifzTplYTkzKR8X0CkZPo7w_KJ-lpEyD",
+  url: (ENV.VITE_SUPABASE_URL || "https://atjidzxkzivzrxxbjprt.supabase.co").trim(),
+  key: (ENV.VITE_SUPABASE_PUBLISHABLE_KEY || "sb_publishable_ifzTplYTkzKR8X0CkZPo7w_KJ-lpEyD").trim(),
 };
+// Owner emails allowed to finish admin setup (see Admin area). This list
+// grants nothing by itself — the is_admin database flag is the real gate.
+export const ADMIN_EMAILS = String(ENV.VITE_ADMIN_EMAILS || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);

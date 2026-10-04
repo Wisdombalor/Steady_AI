@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Steady Admin — redirecting…</title>
+</head>
+<body>
+<script>
+  // Static hosts never see URL hashes, so /admin can't route server-side.
+  // Bounce to the SPA hash route which the app understands.
+  (function () {
+    var sub = location.pathname.replace(/^\/admin\/?/, "");
+    var hash = "#/admin" + (sub ? "/" + sub : "");
+    location.replace("/" + hash + location.search);
+  })();
+</script>
+<noscript><p>Steady Admin needs JavaScript. Open <a href="/#/admin">/#/admin</a>.</p></noscript>
+</body>
+</html>

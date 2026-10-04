@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase, writeAudit } from "../lib/backend";
+import { ADMIN_EMAILS } from "../lib/data";
 import { Login, Signup } from "./Onboarding";
 import { Chips } from "./Chrome";
 
@@ -8,7 +9,7 @@ const NAV = [["/", "Dashboard"], ["/reports", "Reports"], ["/posts", "Posts"], [
 function dbErr(e) {
   const m = String(e?.message || "");
   if (/Could not find the table|schema cache|PGRST205/i.test(m))
-    return "Database tables missing — run supabase/migrations/20261003000000_admin_moderation.sql in the Supabase SQL Editor.";
+    return "Database tables missing — run supabase/schema.sql in the Supabase SQL Editor.";
   if (/row-level security|policy|permission|42501/i.test(m)) return "Not allowed (admin rights required).";
   if (/Failed to fetch|Network/i.test(m)) return "Network problem. Check your connection.";
   return m || "Something went wrong.";
@@ -23,7 +24,8 @@ async function logAudit(adminId, action, targetType, targetId, prev, next) {
   }
 }
 
-export function AdminApp({ user, mod, path, store, update, onAuth, authMode, setAuthMode, onExit, onSignOut }) {
+export function AdminApp({ user, mod, path, store, update, onAuth, authMode, setAuthMode, onExit, onSignOut, refreshMod }) {
+  const [checking, setChecking] = useState(false);
   const [mode, setMode] = useState("login");
   if (!user) {
     return (
@@ -49,11 +51,22 @@ export function AdminApp({ user, mod, path, store, update, onAuth, authMode, set
     );
   }
   if (mod.role !== "admin") {
+    const listed = !!user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
     return (
       <div className="in">
         <div className="ob in" style={{ marginTop: 0 }}>
           <h1>Access denied</h1>
-          <p className="mu">This area is for Steady admins only. Your account ({user.email}) doesn&apos;t have the admin role.</p>
+          <p className="mu">This area is for Steady admins only. Your account ({user.email}) doesn&apos;t have the admin flag.</p>
+          {listed ? (
+            <div className="card">
+              <b>Finish admin setup</b>
+              <p className="mu">This email is listed as an owner, but the database flag isn&apos;t set yet. Run this in the Supabase SQL Editor, then check again:</p>
+              <p className="mu" style={{ wordBreak: "break-all" }}><code>update public.profiles set is_admin = true where email = &apos;{user.email}&apos;;</code></p>
+              <button className="btn sec" disabled={checking} onClick={async () => { setChecking(true); try { await refreshMod?.(); } catch {} setChecking(false); }}>
+                {checking ? "Checking…" : "I've run it — check again"}
+              </button>
+            </div>
+          ) : null}
           <button className="btn sec" onClick={onExit}>← Back to Steady</button>
           <button className="btn sec" style={{ marginTop: 8 }} onClick={onSignOut}>Sign out</button>
         </div>
@@ -78,7 +91,7 @@ export function AdminApp({ user, mod, path, store, update, onAuth, authMode, set
       {page === "posts" && <PostsPage adminId={user.id} />}
       {page === "users" && <UsersPage adminId={user.id} />}
       {page === "history" && <HistoryPage />}
-      {!(["dash", "reports", "posts", "users", "history"].includes(page)) && <p className="mu">Unknown admin page.</p>}
+      {!(["dash", "reports", "posts", "users", "history"].includes(page)) && <p className="mu">That admin page doesn&apos;t exist. Pick one above.</p>}
     </div>
   );
 }
@@ -138,7 +151,7 @@ async function fetchProfiles(ids) {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (!uniq.length) return new Map();
   const a = supabase();
-  const { data, error } = await a.from("profiles").select("user_id,display_name,avatar_url,bio,role,status,warned_count").in("user_id", uniq);
+  const { data, error } = await a.from("profiles").select("user_id,email,display_name,avatar_url,bio,is_admin,status,warned_count").in("user_id", uniq);
   if (error) throw error;
   return new Map((data || []).map((p) => [p.user_id, p]));
 }
@@ -357,7 +370,7 @@ function PostsPage({ adminId }) {
     try {
       const { data, error } = await supabase().from("posts").select("*").eq("id", id.trim()).maybeSingle();
       if (error) throw error;
-      if (!data) { setErr("No post with that ID."); return; }
+      if (!data) { setErr("No post with that ID. Check the ID and try again."); return; }
       setFound(data);
       const mp = await fetchProfiles([data.user_id]);
       setAuthor(mp.get(data.user_id) || null);
@@ -489,14 +502,14 @@ function UsersPage({ adminId }) {
       </div>
       {list.map((u) => (
         <div className="card row" key={u.user_id}>
-          <span><b>{u.display_name || "Member"}</b> <Pill v={u.status} /> <span className="mu">{u.role}</span></span>
+          <span><b>{u.display_name || "Member"}</b> <Pill v={u.status} /> <span className="mu">{u.is_admin ? "admin" : "user"}</span></span>
           <button className="chip" onClick={() => openUser(u)}>Open</button>
         </div>
       ))}
       {sel && (
         <div className="card">
           <div className="row"><b style={{ fontSize: 18 }}>{sel.display_name || "Member"}</b><Pill v={sel.status} /></div>
-          <p className="mu" style={{ margin: "4px 0" }}>{sel.user_id} · role {sel.role} · warnings {sel.warned_count ?? 0}</p>
+          <p className="mu" style={{ margin: "4px 0" }}>{sel.user_id} · {sel.email || "no email"} · {sel.is_admin ? "admin" : "user"} · warnings {sel.warned_count ?? 0}</p>
           {sel.bio ? <p>{sel.bio}</p> : null}
           <div className="row">
             <span>
@@ -527,19 +540,20 @@ function UsersPage({ adminId }) {
 }
 
 function HistoryPage() {
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   useEffect(() => {
     (async () => {
       try {
-        const { data, error } = await supabase().from("audit_log").select("*").order("created_at", { ascending: false }).limit(100);
+        const { data, error } = await supabase().from("moderation_log").select("*").order("created_at", { ascending: false }).limit(100);
         if (error) throw error;
         setRows(data || []);
       } catch (e) { setErr(dbErr(e)); }
     })();
   }, []);
   if (err) return <div className="card"><b>Error</b><p className="mu">{err}</p></div>;
-  if (!rows.length) return <p className="mu">Loading…</p>;
+  if (!rows) return <p className="mu">Loading…</p>;
+  if (!rows.length) return <p className="mu">No admin actions yet. Actions you take will appear here.</p>;
   return (
     <>
       {rows.map((r) => (

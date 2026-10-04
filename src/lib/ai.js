@@ -4,7 +4,7 @@ const CHAT_URL = `${SB_CONF.url}/functions/v1/chat`;
 
 // Beacon chat goes ONLY through the deployed Supabase Edge Function
 // (secure Gemini proxy). No API keys in the UI, no direct calls to Google.
-export async function chatReply({ message }) {
+export async function chatReply({ message, history }) {
   let res;
   try {
     res = await fetch(CHAT_URL, {
@@ -13,7 +13,13 @@ export async function chatReply({ message }) {
         "Content-Type": "application/json",
         apikey: SB_CONF.key,
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({
+        message,
+        history: (history || []).slice(-10).map((m) => ({
+          role: m.r === "u" ? "user" : "model",
+          text: m.t,
+        })),
+      }),
     });
   } catch {
     throw new Error("NET");
@@ -22,7 +28,7 @@ export async function chatReply({ message }) {
   try { data = await res.json(); } catch {}
   if (!res.ok) throw new Error("API:" + (data?.error || res.status));
   if (!data?.reply) throw new Error("API:empty");
-  return data.reply;
+  return { text: data.reply, fallback: !!data.fallback };
 }
 
 export function aiErrorMessage(e) {

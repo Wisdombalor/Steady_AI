@@ -3,7 +3,11 @@ import { SB_CONF, FORM } from "./data";
 
 let client = null;
 export function supabase() {
-  if (!client) client = createClient(SB_CONF.url, SB_CONF.key);
+  if (!client) {
+    client = createClient(SB_CONF.url, SB_CONF.key, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    });
+  }
   return client;
 }
 
@@ -74,15 +78,15 @@ export async function insertPost(a, base) {
 export const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || ""));
 
 // The caller's own moderation state. Never throws: on any error (e.g.
-// pre-migration schema) it fails open to a plain user so the app keeps
-// working; the admin gate independently requires role === 'admin'.
+// pre-schema database) it fails open to a plain user so the app keeps
+// working; the admin gate independently requires the is_admin flag.
 export async function getModState(userId) {
   try {
     if (!userId) return { role: "user", status: "active" };
     const a = supabase();
-    const { data, error } = await a.from("profiles").select("role,status").eq("user_id", userId).maybeSingle();
+    const { data, error } = await a.from("profiles").select("is_admin,status").eq("user_id", userId).maybeSingle();
     if (error || !data) return { role: "user", status: "active" };
-    return { role: data.role || "user", status: data.status || "active" };
+    return { role: data.is_admin ? "admin" : "user", status: data.status || "active" };
   } catch {
     return { role: "user", status: "active" };
   }
@@ -129,10 +133,10 @@ export async function createReport({ reporterId, kind, reason, details, post, us
   return data;
 }
 
-// Append to the admin audit log. Throws when the caller lacks admin rights.
+// Append to the admin moderation log. Throws when the caller lacks admin rights.
 export async function writeAudit(adminId, action, targetType, targetId, prevState, newState) {
   const a = supabase();
-  const { error } = await a.from("audit_log").insert({
+  const { error } = await a.from("moderation_log").insert({
     admin_id: adminId,
     action,
     target_type: targetType,

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { TRIG, EMO, ACTS, PGSI, CO } from "../lib/data";
-import { mmss, daysSince, bestStreak, today, urgeTrigs, urgeEmos } from "../lib/helpers";
-import { Chips } from "./Chrome";
+import { mmss, daysSince, bestStreak, today, urgeTrigs, urgeEmos, missingPwReqs } from "../lib/helpers";
+import { Chips, PasswordInput } from "./Chrome";
+import { BackIcon } from "./Icons";
+import { PwChecklist } from "./Onboarding";
 import { sendReport, createReport } from "../lib/backend";
 import { chatReply, aiErrorMessage } from "../lib/ai";
 
@@ -61,7 +63,7 @@ export function UrgeSheet({ draft, setDraft, onContinue, onLogOnly, logged }) {
       <h2>How are you feeling? (pick all that apply)</h2>
       <MultiPick options={EMO} values={emos} onToggle={(v) => toggle("emos", v)} placeholder="Another feeling… type it here" />
       <br />
-      <button className="btn" onClick={onContinue}>Continue</button>
+      <button className="btn" onClick={onContinue}>Get support</button>
       <br /><br />
       <button className="btn sec" onClick={onLogOnly}>Just log it</button>
     </>
@@ -237,14 +239,19 @@ export function RulesSheet({ onAgree }) {
   );
 }
 
-export function PostSheet({ store, user, onPost }) {
+export function PostSheet({ store, user, onPost, actions }) {
   const [t, setT] = useState("");
   const [v, setV] = useState("me");
   const [err, setErr] = useState("");
+  const [needsAuth, setNeedsAuth] = useState(false);
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     if (!t.trim()) return;
-    if (v !== "me" && !user) { setErr("Log in or sign up to share with the community. You can still post privately."); return; }
+    if (v !== "me" && !user) {
+      setErr("Log in or sign up to share with the community. You can still post privately.");
+      setNeedsAuth(true);
+      return;
+    }
     setBusy(true);
     const msg = await onPost(t.trim(), v);
     setBusy(false);
@@ -255,7 +262,7 @@ export function PostSheet({ store, user, onPost }) {
       <h2>Share your story</h2>
       <textarea rows={4} placeholder="What helped today?" value={t} onChange={(e) => setT(e.target.value)} />
       <label>Who can see this?
-        <select value={v} onChange={(e) => setV(e.target.value)}>
+        <select value={v} onChange={(e) => { setV(e.target.value); setNeedsAuth(false); setErr(""); }}>
           <option value="me">Only me</option>
           <option value="com">Community</option>
           <option value="anon">Community, anonymously</option>
@@ -264,6 +271,12 @@ export function PostSheet({ store, user, onPost }) {
       <p className="mu">Anonymous hides your name. Steady may still store account information.</p>
       <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
       <button className="btn" disabled={busy} onClick={submit}>{busy ? "Posting…" : "Post"}</button>
+      {needsAuth && !user && actions && (
+        <>
+          <button className="btn sec" onClick={() => actions.open("login")} style={{ marginTop: 8 }}>Log in</button>
+          <button className="btn sec" onClick={() => actions.open("signup")} style={{ marginTop: 8 }}>Sign up</button>
+        </>
+      )}
     </>
   );
 }
@@ -347,7 +360,7 @@ export function friendlyDbError(e) {
   const m = String(e?.message || "");
   if (/row-level security|policy|permission|not allowed|42501/i.test(m)) return "Your account isn't allowed to do that.";
   if (/Failed to fetch|Network|network/i.test(m)) return "Check your connection and try again.";
-  if (/Could not find the table|schema cache|PGRST205/i.test(m)) return "The community database isn't set up yet — ask the app owner to run the database migration.";
+  if (/Could not find the table|schema cache|PGRST205/i.test(m)) return "The community database isn't set up yet — ask the app owner to run supabase/schema.sql.";
   return m || "Please try again.";
 }
 
@@ -434,7 +447,7 @@ export function CheckSheet({ store, update, actions }) {
       <label>Mood: <b>{mood}</b>/10<input type="range" min={1} max={10} value={mood} onChange={(e) => setMood(+e.target.value)} /></label>
       <label>Urge level: <b>{urge}</b>/10<input type="range" min={1} max={10} value={urge} onChange={(e) => setUrge(+e.target.value)} /></label>
       <textarea rows={2} placeholder="Anything you'd like to record? (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
-      <button className="btn" onClick={save}>Save</button>
+      <button className="btn" onClick={save}>Save check-in</button>
     </>
   );
 }
@@ -468,7 +481,7 @@ export function SelfResult({ score, done, actions }) {
       <h2>{m[0]}</h2>
       <p>{m[1]}</p>
       <p className="mu">This is a screening tool, not a diagnosis. Score {score} of 27 (PGSI).</p>
-      <button className="btn" onClick={() => { done ? actions.open("ai") : actions.nextOb(); }}>{done ? "Talk to Beacon" : "Continue"}</button>
+      <button className="btn" onClick={() => { done ? actions.open("ai") : actions.nextOb(); }}>{done ? "Talk to Beacon" : "Continue setup"}</button>
       <br /><br />
       {done ? <button className="btn sec" onClick={() => actions.open("protect")}>Protect me</button> : null}
     </>
@@ -501,60 +514,110 @@ export function ReassessResult({ level, actions }) {
   );
 }
 
-export function AiSheet({ store, chat, setChat }) {
+const AI_QUICK = ["I really want to bet right now","I'm bored and restless","I relapsed","Help me find a trigger"];
+const AI_GREETING = (name) => `Hi ${name}, I'm Beacon. I'm here for the next few minutes, not to fix everything. What's going on right now?`;
+
+export function AiSheet({ store, update }) {
+  const chats = store.chats || [];
+  const [activeId, setActiveId] = useState(() => (chats.length ? chats[chats.length - 1].id : null));
+  const [view, setView] = useState("thread");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const boxRef = useRef(null);
 
-  useEffect(() => { if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight; }, [chat]);
+  const active = chats.find((c) => c.id === activeId) || null;
+  const msgs = active ? active.msgs : [];
 
-  const failLast = (text) => setChat((prev) => {
-    const c = [...prev];
-    c[c.length - 1] = { r: "a", t: text };
-    return c;
-  });
+  useEffect(() => { if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight; }, [msgs, busy, view]);
+
+  const appendMsgs = (id, added) => update((prev) => ({
+    chats: (prev.chats || []).map((c) => (c.id === id ? { ...c, msgs: [...c.msgs, ...added].slice(-60) } : c)).slice(-20),
+  }));
+
+  const ensureConvo = (t) => {
+    if (activeId) return { id: activeId, convoMsgs: msgs };
+    const id = "c" + Date.now();
+    const rec = { id, title: t.slice(0, 42), created: Date.now(), days: daysSince(store.start), msgs: [{ r: "u", t }] };
+    update((prev) => ({ chats: [...(prev.chats || []), rec].slice(-20) }));
+    setActiveId(id);
+    return { id, convoMsgs: rec.msgs };
+  };
 
   const send = async (text) => {
     const t = (text ?? input).trim();
     if (!t || busy) return;
     setInput("");
-    const next = [...chat, { r: "u", t }];
+    const { id, convoMsgs } = ensureConvo(t);
     if (/suicid|kill myself|end my life|self.harm|hurt myself|want to die/i.test(t)) {
-      next.push({ r: "a", t: "This sounds like an emergency. Your life matters — please reach out right now:\n" + CO[store.country].r.map((x) => x.o + ": " + x.p).join("\n") + "\nGlobal support: Gambling Therapy (gamblingtherapy.org) · Gamblers Anonymous (gamblersanonymous.org)" });
-      setChat(next);
+      appendMsgs(id, [{ r: "a", t: "This sounds like an emergency. Your life matters — please reach out right now:\n" + CO[store.country].r.map((x) => x.o + ": " + x.p).join("\n") + "\nGlobal support: Gambling Therapy (gamblingtherapy.org) · Gamblers Anonymous (gamblersanonymous.org)" }]);
       return;
     }
+    if (activeId) appendMsgs(id, [{ r: "u", t }]);
     setBusy(true);
-    setChat([...next, { r: "a", t: "…" }]);
     try {
-      const reply = await chatReply({ message: t });
-      failLast(reply);
+      const last = convoMsgs[convoMsgs.length - 1];
+      const hist = last && last.r === "u" && last.t === t ? convoMsgs.slice(0, -1) : convoMsgs;
+      const { text: reply, fallback } = await chatReply({ message: t, history: hist });
+      appendMsgs(id, [{ r: "a", t: fallback ? reply + "\n\n(Saved reply — Beacon is offline right now.)" : reply }]);
     } catch (e) {
-      failLast(aiErrorMessage(e));
+      appendMsgs(id, [{ r: "a", t: aiErrorMessage(e) }]);
     }
     setBusy(false);
   };
 
+  const newChat = () => { setActiveId(null); setView("thread"); setInput(""); };
+  const openChat = (id) => { setActiveId(id); setView("thread"); };
+  const delChat = (id) => {
+    update((prev) => ({ chats: (prev.chats || []).filter((c) => c.id !== id) }));
+    if (id === activeId) { setActiveId(null); setView("list"); }
+  };
+
+  if (view === "list") {
+    return (
+      <div className="ai-wrap">
+        <div className="row" style={{ alignItems: "center" }}>
+          <h2 style={{ margin: 0 }}>Beacon chats</h2>
+          <button className="chip on" onClick={newChat}>+ New</button>
+        </div>
+        <p className="mu">Every conversation keeps the streak you had when you started it.</p>
+        <div className="ai-chat">
+          {chats.slice().reverse().map((c) => (
+            <div className="card row" key={c.id}>
+              <button style={{ flex: 1, textAlign: "left", minWidth: 0 }} onClick={() => openChat(c.id)}>
+                <b className="chat-title">{c.title || "Conversation"}</b>
+                <span className="mu">Day {c.days} · {new Date(c.created).toLocaleDateString()} · {c.msgs.length} messages</span>
+              </button>
+              <button className="mu" style={{ textDecoration: "underline", padding: 8 }} onClick={() => delChat(c.id)}>Delete</button>
+            </div>
+          ))}
+          {!chats.length && <p className="mu">No conversations yet. Start one below.</p>}
+        </div>
+        <div className="ai-input">
+          <button className="btn" onClick={newChat}>Start a new conversation</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="ai-wrap">
-      <h2>Beacon</h2>
-      <p className="mu">Steady&apos;s recovery companion — support, not a therapist or emergency service.</p>
+      <div className="row" style={{ alignItems: "center" }}>
+        <button className="chip" onClick={() => setView("list")} aria-label="Back to all chats"><BackIcon /> All chats</button>
+        <span className="mu">{active ? `Day ${active.days}` : "New chat"}</span>
+        <button className="chip on" onClick={newChat}>+ New</button>
+      </div>
       <div ref={boxRef} id="chat" className="ai-chat">
-        {chat.map((m, i) => (
-          <div key={i} className={"msg " + m.r}>
-            {busy && i === chat.length - 1 && m.r === "a" && m.t === "…" ? (
-              <span className="tdots" aria-label="Beacon is typing"><i /><i /><i /></span>
-            ) : m.t}
-          </div>
-        ))}
+        {!msgs.length && <div className="msg a">{AI_GREETING(store.name)}</div>}
+        {msgs.map((m, i) => <div key={i} className={"msg " + m.r}>{m.t}</div>)}
+        {busy && <div className="msg a"><span className="tdots" aria-label="Beacon is typing"><i /><i /><i /></span></div>}
       </div>
       <div className="ai-quick">
-        {["I really want to bet right now","I'm bored and restless","I relapsed","Help me find a trigger"].map((q) => (
+        {AI_QUICK.map((q) => (
           <button key={q} className="chip" onClick={() => send(q)}>{q}</button>
         ))}
       </div>
       <div className="ai-input">
-        <input placeholder="Type here" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") send(); }} />
+        <input placeholder="Message Beacon" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") send(); }} />
         <button className="btn" onClick={() => send()} disabled={busy}>{busy ? "Thinking…" : "Send"}</button>
       </div>
     </div>
@@ -567,10 +630,12 @@ export function SetPwSheet({ onSave }) {
   return (
     <>
       <h2>Set a new password</h2>
-      <input type="password" autoComplete="new-password" placeholder="New password (8+ characters)" value={v} onChange={(e) => setV(e.target.value)} />
+      <PasswordInput autoComplete="new-password" placeholder="New password" value={v} onChange={(e) => setV(e.target.value)} />
+      <PwChecklist pw={v} />
       <p style={{ color: "var(--bad)", minHeight: 20, margin: "0 0 8px" }}>{err}</p>
       <button className="btn" onClick={async () => {
-        if (v.length < 8) { setErr("Use at least 8 characters."); return; }
+        const missing = missingPwReqs(v);
+        if (missing.length) { setErr("Password is too weak — it needs: " + missing.join(", ") + "."); return; }
         const msg = await onSave(v);
         if (msg) setErr(msg);
       }}>Save password</button>

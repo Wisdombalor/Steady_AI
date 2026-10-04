@@ -41,6 +41,10 @@ img.avatar{padding:0;object-fit:cover}
 .pv-avatar{width:72px;height:72px;flex:none;border-radius:50%;background:var(--ac);color:var(--ac2);display:flex;align-items:center;justify-content:center;font:500 30px var(--fd);object-fit:cover}
 .prof-link{display:inline-flex!important;align-items:center;gap:8px;min-height:44px;padding:4px 8px 4px 0!important;border-radius:12px;text-align:left}
 .prof-link:hover{background:var(--bg2)}
+.pw-wrap{position:relative;display:block}
+.pw-wrap input{padding-right:48px}
+.pw-toggle{position:absolute;right:8px;top:6px;bottom:14px;width:36px;display:flex;align-items:center;justify-content:center;color:var(--mu);border-radius:10px;padding:0}
+.pw-toggle:hover{color:var(--ac);background:var(--bg2)}
 .adm-nav{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 12px}
 .adm-nav a{flex:none}
 a.chip{text-decoration:none;color:inherit}
@@ -56,6 +60,7 @@ a.chip{text-decoration:none;color:inherit}
 .ai-quick .chip{white-space:nowrap;flex:none}
 .ai-input{flex:none}
 .ai-input input{margin-bottom:8px}
+.chat-title{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .tdots{display:inline-flex;gap:5px;align-items:center;padding:5px 3px}
 .tdots i{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.25;animation:tblink 1.2s ease-in-out infinite}
 .tdots i:nth-child(2){animation-delay:.15s}

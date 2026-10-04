@@ -42,7 +42,7 @@ export function Home({ store, actions }) {
       <div className="grid">
         <button className="card" onClick={() => actions.open("ai")}>Talk to Beacon</button>
         <button className="card" onClick={() => actions.open("acts")}>Do an activity</button>
-        <button className="card" onClick={() => actions.open("call")}>Call someone</button>
+        <button className="card" onClick={() => actions.open("call")}>Call trusted person</button>
         <button className="card" onClick={() => actions.open("protect")}>Protect me</button>
       </div>
       <div className="grid" style={{ marginTop: 12 }}>

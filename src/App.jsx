@@ -61,10 +61,11 @@ export default function App() {
   const [tab, setTab] = useState("home");
   const [ob, setOb] = useState(0);
   const [authMode, setAuthMode] = useState("start");
+  // Status of a just-completed OAuth redirect (shown on the landing page).
+  const [oauthNote, setOauthNote] = useState(null);
   const [sheet, setSheet] = useState(null);
   const [modal, setModal] = useState(null);
   const [filters, setFilters] = useState({ time: "all", stage: "all" });
-  const [chat, setChat] = useState([]);
   const [urgeDraft, setUrgeDraft] = useState(null);
   const [actIndex, setActIndex] = useState(0);
   const [actDone, setActDone] = useState(0);
@@ -88,6 +89,14 @@ export default function App() {
   }, [user]);
 
   const suspended = !!user && mod.status !== "active";
+
+  const refreshMod = useCallback(async () => {
+    try {
+      const id = userRef.current?.id;
+      if (!id) return;
+      setMod(await getModState(id));
+    } catch {}
+  }, []);
 
   const close = useCallback(() => setSheet(null), []);
   const open = useCallback((name, payload) => {
@@ -130,24 +139,68 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.done]);
 
-  // init supabase session
+  // Track the session for the life of the app so refreshes, restores and
+  // token refreshes keep the user signed in (persisted by supabase-js).
   useEffect(() => {
+    let sub = null;
     (async () => {
       try {
         const a = supabase();
-        a.auth.onAuthStateChange((ev) => {
-          if (ev === "PASSWORD_RECOVERY") open("setpw");
+        const { data } = a.auth.onAuthStateChange(async (ev, session) => {
+          if (ev === "PASSWORD_RECOVERY") { open("setpw"); return; }
+          if (ev === "SIGNED_OUT") { setUser(null); return; }
+          if (session?.user) {
+            // Fresh sign-ins navigate home; silent token refreshes must not
+            // yank the user out of what they're doing.
+            await handleUser(session.user, ev !== "TOKEN_REFRESHED");
+          } else if (ev === "INITIAL_SESSION") {
+            refreshPosts();
+          }
         });
-        const r = await a.auth.getSession();
-        const sessUser = r.data?.session?.user;
-        if (sessUser) await handleUser(sessUser);
-        else refreshPosts();
+        sub = data?.subscription;
+        // Google redirect lands back here with ?code=... (or ?error=...).
+        // Finish the exchange explicitly so a failure shows a message on the
+        // landing page instead of silently stranding the user there.
+        const q = new URLSearchParams(window.location.search);
+        if (q.has("code") || q.has("error") || q.has("error_description")) {
+          const cleanUrl = () => {
+            try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch {}
+          };
+          try {
+            setOauthNote({ kind: "pending", text: "Completing Google sign-in…" });
+            if (q.get("error")) throw new Error(q.get("error_description") || q.get("error") || "Google sign-in was cancelled.");
+            const { data: s0 } = await a.auth.getSession();
+            if (s0?.session?.user) {
+              await handleUser(s0.session.user, true);
+            } else {
+              const { data: ex, error: exErr } = await a.auth.exchangeCodeForSession(window.location.href);
+              if (exErr) throw exErr;
+              if (ex?.session?.user) await handleUser(ex.session.user, true);
+            }
+            setOauthNote(null);
+            cleanUrl();
+          } catch (e) {
+            // The auto-detect may have won a race and signed us in anyway.
+            try {
+              const { data: re } = await a.auth.getSession();
+              if (re?.session?.user) {
+                await handleUser(re.session.user, true);
+                setOauthNote(null);
+                cleanUrl();
+                return;
+              }
+            } catch {}
+            setOauthNote({ kind: "error", text: "Google sign-in didn't complete (" + (e?.message || "unknown error") + "). Please try again." });
+            cleanUrl();
+          }
+        }
       } catch {}
     })();
+    return () => { try { sub?.unsubscribe(); } catch {} };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleUser = async (u) => {
+  const handleUser = async (u, fresh = true) => {
     setUser(u);
     try {
       const a = supabase();
@@ -166,8 +219,10 @@ export default function App() {
       update({ posts: [...remote, ...local] });
     } catch {}
     const meta = u.user_metadata || {};
-    const displayName = meta.name || meta.full_name || storeRef.current.name || "";
     const email = u.email || "";
+    // Google accounts don't always expose a name; fall back to the email
+    // prefix so OAuth users are never stranded on the landing page.
+    const displayName = meta.name || meta.full_name || storeRef.current.name || email.split("@")[0] || "";
     const n = displayName.trim();
     update({ email });
     if (n.length < 2) { setAuthMode("start"); return; }
@@ -177,6 +232,7 @@ export default function App() {
       await syncProfile(u, { displayName: n, avatarUrl: s.avatar, bio: s.bio });
       setMod(await getModState(u.id));
     } catch {}
+    if (!fresh) return;
     if (storeRef.current.done) { close(); setTab("home"); }
     else setOb(1);
   };
@@ -194,17 +250,34 @@ export default function App() {
       }
       if (cmd.signup) {
         update({ name: cmd.signup.name });
-        const r = await a.auth.signUp({ email: cmd.signup.email, password: cmd.signup.password, options: { data: { name: cmd.signup.name } } });
+        const r = await a.auth.signUp({
+          email: cmd.signup.email,
+          password: cmd.signup.password,
+          options: { data: { name: cmd.signup.name }, emailRedirectTo: location.origin + location.pathname },
+        });
         if (r.error) throw r.error;
         if (r.data.session) await handleUser(r.data.session.user);
-        else return "Almost done. Check your email and tap the confirmation link, then log in.";
-        return null;
+        else return "UNCONFIRMED:" + cmd.signup.email;
       }
       if (cmd.login) {
-        const r = await a.auth.signInWithPassword({ email: cmd.login.email, password: cmd.login.password });
-        if (r.error) throw r.error;
-        await handleUser(r.data.user);
+        try {
+          const r = await a.auth.signInWithPassword({ email: cmd.login.email, password: cmd.login.password });
+          if (r.error) throw r.error;
+          await handleUser(r.data.user);
+        } catch (e) {
+          if (/not confirmed|email not confirmed/i.test(e?.message || "")) return "UNCONFIRMED:" + cmd.login.email;
+          throw e;
+        }
         return null;
+      }
+      if (cmd.resend) {
+        const r = await a.auth.resend({
+          type: "signup",
+          email: cmd.resend,
+          options: { emailRedirectTo: location.origin + location.pathname },
+        });
+        if (r.error) throw r.error;
+        return "Activation link sent. Check your inbox (and spam), then log in.";
       }
       if (cmd.reset) {
         const r = await a.auth.resetPasswordForEmail(cmd.reset, { redirectTo: location.origin + location.pathname });
@@ -212,6 +285,9 @@ export default function App() {
         return "If an account exists for that email, a reset link is on its way.";
       }
     } catch (e) {
+      if (cmd.signup && /already registered|already exists|already been registered/i.test(e?.message || "")) {
+        return "EXISTS:" + cmd.signup.email;
+      }
       return aerr(e);
     }
     return null;
@@ -231,7 +307,7 @@ export default function App() {
       try { await supabase().auth.signOut(); } catch {}
       setUser(null);
     resetStore();
-      setTab("home"); setOb(0); setAuthMode("start"); setChat([]);
+      setTab("home"); setOb(0); setAuthMode("start");
     },
   };
 
@@ -293,22 +369,55 @@ export default function App() {
     if (suspended) return "Your account is suspended, so you can't post right now.";
     const d = daysSince(store.start);
     const stage = stageFor(d);
+    const localSave = () => {
+      update({ posts: [{ id: "p" + Date.now(), t: text, v: "me", mine: 1, d: Date.now(), stage }, ...store.posts] });
+    };
     if (user) {
       try {
         const a = supabase();
         await insertPost(a, {
+          user_id: user.id,
           body: text, visibility: visibility === "me" ? "private" : visibility === "anon" ? "anon" : "community",
           stage, display_name: store.name,
           _av: store.avatar || null, _bio: store.bio || null, _days: daysSince(store.start),
         });
         await refreshPosts();
-      } catch {
-        return "Couldn't post right now. Please try again.";
+      } catch (e) {
+        const missing = /Could not find the table|schema cache|PGRST205/i.test(String(e?.message || ""));
+        if (missing && visibility === "me") {
+          // Private posts don't need the server: keep them on-device.
+          localSave();
+        } else if (missing) {
+          return "Community posting needs the database set up — ask the app owner to run the Supabase migration.";
+        } else {
+          return "Couldn't post right now. Please try again.";
+        }
       }
     } else {
-      update({ posts: [{ id: "p" + Date.now(), t: text, v: "me", mine: 1, d: Date.now(), stage }, ...store.posts] });
+      localSave();
     }
     close();
+    return null;
+  };
+
+  // Switch an own post between Only me (private) and Anonymous.
+  // Returns an error string, or null on success.
+  const setPostVisibility = async (post, visibility) => {
+    const v = visibility === "me" ? "me" : "anon";
+    update((prev) => ({ posts: prev.posts.map((p) => (p.id === post.id ? { ...p, v } : p)) }));
+    if (user && !String(post.id).startsWith("p")) {
+      try {
+        const { error } = await supabase().from("posts").update({ visibility: v === "me" ? "private" : "anon" }).eq("id", post.id);
+        if (error) throw error;
+        await refreshPosts();
+      } catch (e) {
+        update((prev) => ({ posts: prev.posts.map((p) => (p.id === post.id ? { ...p, v: post.v } : p)) }));
+        const m = String(e?.message || "");
+        if (/Could not find the table|schema cache|PGRST205/i.test(m)) return "Visibility needs the database migration to sync — it's updated on this device for now.";
+        if (/row-level security|policy|permission|42501/i.test(m)) return "Your account isn't allowed to change that.";
+        return "Couldn't change visibility. Try again.";
+      }
+    }
     return null;
   };
 
@@ -331,7 +440,7 @@ export default function App() {
     }
     resetStore();
     setFilters({ time: "all", stage: "all" });
-    setChat([]); setTab("home"); setOb(0); setAuthMode("start"); close();
+    setTab("home"); setOb(0); setAuthMode("start"); close();
   };
 
   if (!store.done) {
@@ -339,7 +448,7 @@ export default function App() {
       <div id="app">
         <main id="main">
           <Onboarding store={store} update={update} ob={ob} setOb={setOb} authMode={authMode} setAuthMode={setAuthMode}
-            onFinish={onFinishOnboarding} onAuth={onAuth} />
+            onFinish={onFinishOnboarding} onAuth={onAuth} notice={oauthNote} />
         </main>
         <nav id="nav" />
         <Sheet open={!!sheet} onClose={close}>
@@ -372,6 +481,7 @@ export default function App() {
             onAuth={onAuth} authMode={authMode} setAuthMode={setAuthMode}
             onExit={() => { window.location.hash = "#/"; }}
             onSignOut={actions.logout}
+            refreshMod={refreshMod}
           />
         </main>
         <nav id="nav" />
@@ -409,7 +519,6 @@ export default function App() {
       // Every path that opens the urge sheet must create a draft + log the urge,
       // otherwise the sheet renders with nothing to save to.
       if (name === "urge") { startUrge(); return; }
-      if (name === "ai" && (!chat.length)) setChat([{ r: "a", t: `Hi ${store.name}, I'm Beacon. I'm here for the next few minutes, not to fix everything. What's going on right now?` }]);
       if (name === "acts" && sheet?.name !== "acts") { /* keep index */ }
       open(name, payload);
     },
@@ -420,7 +529,7 @@ export default function App() {
       <main id="main">
         {tab === "home" && <Home store={store} actions={sheetActions} />}
         {tab === "rec" && <Recovery store={store} actions={sheetActions} />}
-        {tab === "com" && <Community store={store} filters={filters} setFilters={setFilters} onOpen={open} />}
+        {tab === "com" && <Community store={store} filters={filters} setFilters={setFilters} onOpen={open} user={user} actions={sheetActions} onVisibility={setPostVisibility} />}
         {tab === "sup" && <Support store={store} update={update} actions={sheetActions} />}
         {tab === "prot" && <Protect store={store} onBack={() => goTab("sup")} />}
         {tab === "pro" && <Profile store={store} update={update} actions={actions} authed={!!user} userId={user?.id} />}
@@ -448,7 +557,7 @@ export default function App() {
           />
         )}
         {sheet?.name === "post" && (store.rules
-          ? <PostSheet store={store} user={user} onPost={submitPost} />
+          ? <PostSheet store={store} user={user} onPost={submitPost} actions={sheetActions} />
           : <RulesSheet onAgree={() => { update({ rules: 1 }); open("post"); }} />)}
         {sheet?.name === "filters" && <FiltersSheet filters={filters} setFilters={setFilters} onApply={close} />}
         {sheet?.name === "del" && <DeleteSheet onConfirm={() => deletePost(sheet.payload)} onCancel={close} />}
@@ -475,7 +584,7 @@ export default function App() {
         {sheet?.name === "check" && <CheckSheet store={store} update={update} actions={sheetActions} />}
         {sheet?.name === "selfcheck" && <SelfCheckSheet onDone={(score) => { update({ test: score }); setSelfScore(score); open("selfresult"); }} />}
         {sheet?.name === "selfresult" && <SelfResult score={selfScore ?? store.test} done={store.done} actions={sheetActions} />}
-        {sheet?.name === "ai" && <AiSheet store={store} chat={chat.length ? chat : [{ r: "a", t: `Hi ${store.name}, I'm Beacon. I'm here for the next few minutes, not to fix everything. What's going on right now?` }]} setChat={setChat} />}
+        {sheet?.name === "ai" && <AiSheet store={store} update={update} />}
         {sheet?.name === "reassess" && <ReassessSheet onPick={pickReassess} />}
         {sheet?.name === "reassessResult" && <ReassessResult level={reassessLevel} actions={sheetActions} />}
         {sheet?.name === "setpw" && <SetPwSheet onSave={async (v) => {

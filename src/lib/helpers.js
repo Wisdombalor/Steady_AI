@@ -39,7 +39,7 @@ export const aerr = (e) => {
   if (/already registered|already been registered/i.test(m)) return "That email already has an account. Try logging in.";
   if (/not confirmed/i.test(m)) return "Please confirm your email first. Check your inbox for the link.";
   if (/rate limit|too many|seconds/i.test(m)) return "Too many attempts. Wait a moment and try again.";
-  if (/password/i.test(m)) return "Use a password with at least 8 characters.";
+  if (/password/i.test(m)) return "Use a stronger password: 8+ characters with an uppercase letter, lowercase letter, number and symbol.";
   if (/valid email|invalid.*email/i.test(m)) return "That email address doesn't look right.";
   if (/network|fetch/i.test(m)) return "Network problem. Check your connection.";
   return "Something went wrong. Please try again.";
@@ -95,3 +95,14 @@ export const isValidName = (name) => {
 };
 
 export const normalizeName = (name) => String(name ?? "").trim().replace(/\s+/g, " ");
+
+// Password strength: at least one of each, else rejected as weak.
+export const PW_REQS = [
+  ["8+ characters", (p) => p.length >= 8],
+  ["Uppercase letter (A–Z)", (p) => /[A-Z]/.test(p)],
+  ["Lowercase letter (a–z)", (p) => /[a-z]/.test(p)],
+  ["Number (0–9)", (p) => /\d/.test(p)],
+  ["Symbol (e.g. !@#$%)", (p) => /[^A-Za-z0-9]/.test(p)],
+];
+export const missingPwReqs = (pw) => PW_REQS.filter(([, test]) => !test(pw || "")).map(([label]) => label);
+export const isStrongPassword = (pw) => missingPwReqs(pw).length === 0;

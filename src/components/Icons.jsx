@@ -51,6 +51,24 @@ export function BackIcon() {
   );
 }
 
+export function EyeIcon() {
+  return (
+    <svg className="ic" viewBox="0 0 24 24" aria-hidden>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx={12} cy={12} r={3} />
+    </svg>
+  );
+}
+
+export function EyeOffIcon() {
+  return (
+    <svg className="ic" viewBox="0 0 24 24" aria-hidden>
+      <path d="M3 3l18 18M10.2 6.1A9.6 9.6 0 0112 6c6.5 0 10 6 10 6a17 17 0 01-3.1 3.3M6.6 6.6C4 8.4 2 12 2 12s3.5 7 10 7c1.5 0 2.8-.3 4-.8" />
+      <path d="M9.9 9.9a3 3 0 004.2 4.2" />
+    </svg>
+  );
+}
+
 export function CalendarIcon() {
   return (
     <svg className="ic" viewBox="0 0 24 24" aria-hidden>

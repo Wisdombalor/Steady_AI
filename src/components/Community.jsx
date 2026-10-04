@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { FilterIcon } from "./Icons";
 
-export function Community({ store, filters, setFilters, onOpen }) {
+export function Community({ store, filters, setFilters, onOpen, user, actions, onVisibility }) {
   const n = (filters.time !== "all") + (filters.stage !== "all");
   const now = Date.now(), D = 864e5;
   const tf = {
@@ -12,17 +13,35 @@ export function Community({ store, filters, setFilters, onOpen }) {
   const L = store.posts
     .filter((p) => (p.status ?? "active") === "active" && (p.v !== "me" || p.mine) && !store.hidden.includes(p.id) && (filters.time === "all" || filters.time === "Newest" || tf[filters.time](p)) && (filters.stage === "all" || p.stage === filters.stage))
     .sort((a, b) => b.d - a.d);
+  const [visErr, setVisErr] = useState("");
+
+  const flip = async (p) => {
+    if (!onVisibility) return;
+    setVisErr("");
+    const msg = await onVisibility(p, p.v === "me" ? "anon" : "me");
+    if (msg) setVisErr(msg);
+  };
 
   return (
     <div className="in">
       <div className="row"><h1>Community</h1>
-        <span>
-          <button className="chip" onClick={() => onOpen("filters")}><FilterIcon /> Filters{n ? <span className="bd">{n}</span> : null}</button>{" "}
-          <button className="chip on" onClick={() => onOpen("post")}>Share</button>
-        </span>
+        {user && (
+          <span>
+            <button className="chip" onClick={() => onOpen("filters")}><FilterIcon /> Filters{n ? <span className="bd">{n}</span> : null}</button>{" "}
+            <button className="chip on" onClick={() => onOpen("post")}>Share</button>
+          </span>
+        )}
       </div>
       <p className="mu">No betting tips, no shaming.</p>
-      {n ? <button className="chip" onClick={() => setFilters({ time: "all", stage: "all" })}>Clear filters</button> : null}
+      {!user && actions && (
+        <div className="card">
+          <b>Join the conversation</b>
+          <p className="mu">Log in or sign up to share your story. Reading along is free.</p>
+          <button className="btn" onClick={() => actions.open("login")} style={{ marginBottom: 8 }}>Log in</button>
+          <button className="btn sec" onClick={() => actions.open("signup")}>Sign up</button>
+        </div>
+      )}
+      {user && n ? <button className="chip" onClick={() => setFilters({ time: "all", stage: "all" })}>Clear filters</button> : null}
       {L.map((p) => {
         const av = p.av || (p.mine ? store.avatar : null);
         const nm = p.n || store.name;
@@ -39,16 +58,24 @@ export function Community({ store, filters, setFilters, onOpen }) {
                 <b>{nm}</b>{p.s ? <span className="tag">Example</span> : null}
               </button>
             )}
-            <span className="mu">{p.stage}{p.v === "me" ? " · only you" : ""}</span>
+            <span className="mu">{p.stage}{p.v === "me" ? " · only you" : p.mine ? " · anonymous" : ""}</span>
           </div>
           <p>{p.t}</p>
           <div className="row"><span className="mu">{new Date(p.d).toLocaleDateString()}</span>
-            <span>{p.mine ? <button className="mu" onClick={() => onOpen("del", p)}>Delete</button> : <button className="mu" onClick={() => onOpen("rep", p)}>Report</button>}</span>
+            <span>
+              {user && p.mine && (p.v === "me" || p.v === "anon") && onVisibility && (
+                <><button className="mu" onClick={() => flip(p)}>{p.v === "me" ? "Make anonymous" : "Make private"}</button>{" · "}</>
+              )}
+              {p.mine
+                ? (user ? <button className="mu" onClick={() => onOpen("del", p)}>Delete</button> : null)
+                : <button className="mu" onClick={() => onOpen("rep", p)}>Report</button>}
+            </span>
           </div>
         </div>
         );
       })}
-      {!L.length && <p className="mu">{store.posts.length ? "No posts match these filters." : "No posts yet. Be the first to share your story."}</p>}
+      {visErr && <p style={{ color: "var(--bad)", fontSize: 14 }}>{visErr}</p>}
+      {!L.length && <p className="mu">{store.posts.length ? "No posts match these filters." : user ? "No posts yet. Be the first to share your story." : "No posts yet. Check back soon."}</p>}
     </div>
   );
 }
