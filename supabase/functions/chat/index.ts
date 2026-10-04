@@ -60,6 +60,7 @@ Deno.serve(async (req) => {
     let reply = "";
     let lastStatus = 0;
     let lastError = "";
+    let retryAfterSeconds = 0;
 
     for (let attempt = 0; attempt <= delays.length; attempt++) {
       try {
@@ -78,6 +79,14 @@ Deno.serve(async (req) => {
           lastStatus = res.status;
           const e = data?.error;
           lastError = String(typeof e === "string" ? e : (e?.message || JSON.stringify(e) || "")).slice(0, 200);
+          // 429s often carry RetryInfo.retryDelay ("34s") — the exact wait.
+          const details = Array.isArray(data?.error?.details) ? data.error.details : [];
+          for (const d of details) {
+            if (String(d?.["@type"] || "").includes("RetryInfo") && d?.retryDelay != null) {
+              const m = String(d.retryDelay).match(/([\d.]+)/);
+              if (m) retryAfterSeconds = Math.max(retryAfterSeconds, Math.ceil(parseFloat(m[1])));
+            }
+          }
         }
         const parts = data?.candidates?.[0]?.content?.parts;
         if (Array.isArray(parts)) {
@@ -101,6 +110,11 @@ Deno.serve(async (req) => {
     // 404 = model not available, 429 = quota exhausted).
     if (!reply) {
       console.error(`[chat] gemini failed status=${lastStatus} err=${lastError}`);
+      // Quota exhaustion (429) is a resting state, not a glitch: tell the
+      // app to park Beacon until tokens restore instead of looping fallbacks.
+      if (lastStatus === 429) {
+        return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true, unavailable: true, reason: "gemini_429", retryAfterSeconds });
+      }
       return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true, reason: lastStatus ? `gemini_${lastStatus}` : "gemini_empty" });
     }
     return json({ reply });

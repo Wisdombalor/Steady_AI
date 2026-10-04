@@ -327,11 +327,13 @@ const USER_REASONS = ["Harassment","Impersonation","Spam","Harmful content","Oth
 // DB-backed reporting. target = { kind: "post", post } | { kind: "user", userId, name }.
 export function ReportSheet({ target, reporterId, blocked, store, update, actions }) {
   const [sending, setSending] = useState(false);
+  const [pending, setPending] = useState(null);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState("");
   const isPost = target?.kind === "post";
   const send = async (reason) => {
     if (blocked) { setErr("Your account is suspended, so you can't file reports right now."); return; }
+    setPending(null);
     setSending(true);
     setErr("");
     try {
@@ -362,8 +364,18 @@ export function ReportSheet({ target, reporterId, blocked, store, update, action
       <h2>{isPost ? "Report post" : `Report ${target?.name || "user"}`}</h2>
       <p className="mu">Why are you reporting this?</p>
       {(isPost ? POST_REASONS : USER_REASONS).map((r) => (
-        <button key={r} className="btn sec" style={{ marginBottom: 8 }} onClick={() => send(r)}>{r}</button>
+        <button key={r} className="btn sec" style={{ marginBottom: 8 }} onClick={() => setPending(r)}>{r}</button>
       ))}
+      {pending && (
+        <div className="card" style={{ marginTop: 4 }}>
+          <b>Report for “{pending}”?</b>
+          <p className="mu" style={{ margin: "4px 0 8px" }}>
+            {isPost ? "The moderation team will review this post." : "The moderation team will review this user."}
+          </p>
+          <button className="btn" onClick={() => send(pending)}>Send report</button>
+          <button className="btn sec" style={{ marginTop: 8 }} onClick={() => setPending(null)}>Cancel</button>
+        </div>
+      )}
       {err ? <p style={{ color: "var(--bad)", fontSize: 14 }}>{err}</p> : null}
     </>
   );
@@ -537,6 +549,23 @@ export function AiSheet({ store, update }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
+  // Resting state: Gemini quota exhausted. Timestamp (ms) when Beacon may be
+  // back, or Infinity when the reset time is unknown (daily quota).
+  const [restoreAt, setRestoreAt] = useState(null);
+  const [nowMs, setNowMs] = useState(Date.now());
+  const resting = restoreAt != null && nowMs < restoreAt;
+  useEffect(() => {
+    if (!resting) return;
+    const t = setInterval(() => {
+      const n = Date.now();
+      setNowMs(n);
+      if (restoreAt !== Infinity && n >= restoreAt) setRestoreAt(null);
+    }, 15000);
+    return () => clearInterval(t);
+  }, [resting, restoreAt]);
+  const restMsg = !resting ? null : (restoreAt === Infinity
+    ? "Today's AI limit is reached. Back after midnight Pacific."
+    : `Back in about ${Math.max(1, Math.ceil((restoreAt - nowMs) / 60000))} min.`);
   const boxRef = useRef(null);
 
   const active = chats.find((c) => c.id === activeId) || null;
@@ -559,7 +588,7 @@ export function AiSheet({ store, update }) {
 
   const send = async (text) => {
     const t = (text ?? input).trim();
-    if (!t || busy) return;
+    if (!t || busy || resting) return;
     setInput("");
     const { id, convoMsgs } = ensureConvo(t);
     if (/suicid|kill myself|end my life|self.harm|hurt myself|want to die/i.test(t)) {
@@ -571,8 +600,15 @@ export function AiSheet({ store, update }) {
     try {
       const last = convoMsgs[convoMsgs.length - 1];
       const hist = last && last.r === "u" && last.t === t ? convoMsgs.slice(0, -1) : convoMsgs;
-      const { text: reply, fallback } = await chatReply({ message: t, history: hist });
-      appendMsgs(id, [{ r: "a", t: fallback ? reply + "\n\n(Saved reply — Beacon is offline right now.)" : reply }]);
+      const res = await chatReply({ message: t, history: hist });
+      if (res.unavailable) {
+        // Out of tokens: park Beacon instead of looping saved replies.
+        const s = res.retryAfterSeconds;
+        setRestoreAt(s > 0 && s < 6 * 3600 ? Date.now() + s * 1000 : Infinity);
+        appendMsgs(id, [{ r: "a", t: "Beacon is resting right now — the AI limit is reached, so I'm pausing replies instead of repeating myself. Your message is saved above. Try an urge activity or call someone you trust in the meantime." }]);
+      } else {
+        appendMsgs(id, [{ r: "a", t: res.fallback ? res.text + "\n\n(Saved reply — Beacon is offline right now.)" : res.text }]);
+      }
     } catch (e) {
       appendMsgs(id, [{ r: "a", t: aiErrorMessage(e) }]);
     }
@@ -635,12 +671,19 @@ export function AiSheet({ store, update }) {
       </div>
       <div className="ai-quick">
         {AI_QUICK.map((q) => (
-          <button key={q} className="chip" onClick={() => send(q)}>{q}</button>
+          <button key={q} className="chip" disabled={resting} onClick={() => send(q)}>{q}</button>
         ))}
       </div>
+      {resting && (
+        <div className="card" style={{ marginBottom: 8 }}>
+          <b>Beacon is resting</b>
+          <p className="mu" style={{ margin: "4px 0 8px" }}>{restMsg} Urge activities and trusted contacts still work.</p>
+          <button className="chip" onClick={() => { setRestoreAt(null); setNowMs(Date.now()); }}>Try anyway</button>
+        </div>
+      )}
       <div className="ai-input">
-        <input placeholder="Message Beacon" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") send(); }} />
-        <button className="btn" onClick={() => send()} disabled={busy}>{busy ? "Thinking…" : "Send"}</button>
+        <input placeholder={resting ? "Beacon is resting…" : "Message Beacon"} disabled={resting} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") send(); }} />
+        <button className="btn" onClick={() => send()} disabled={busy || resting}>{busy ? "Thinking…" : "Send"}</button>
       </div>
     </div>
   );

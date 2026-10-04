@@ -159,6 +159,24 @@ function Pill({ v }) {
   return <span className={"pill " + cls}>{v}</span>;
 }
 
+// Every admin action is two-tap: arm, then confirm. Nothing fires on one tap.
+function ConfirmBtn({ children, onConfirm, danger }) {
+  const [armed, setArmed] = useState(false);
+  if (!armed) return <button className="chip" onClick={() => setArmed(true)}>{children}</button>;
+  return (
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+      <button
+        className="chip"
+        style={danger ? { borderColor: "var(--bad)", color: "var(--bad)" } : null}
+        onClick={() => { setArmed(false); onConfirm(); }}
+      >
+        Confirm
+      </button>
+      <button className="chip" onClick={() => setArmed(false)}>Cancel</button>
+    </span>
+  );
+}
+
 async function fetchProfiles(ids) {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (!uniq.length) return new Map();
@@ -323,9 +341,9 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
             <p className="mu" style={{ margin: 0 }}>{new Date(post.created_at).toLocaleString()} · {post.stage} · {post.visibility}</p>
             <div className="row" style={{ marginTop: 8 }}>
               <span>
-                <button className="chip" onClick={() => onPost(post, "hidden")}>Hide</button>{" "}
-                <button className="chip" onClick={() => onPost(post, "removed")}>Remove</button>{" "}
-                <button className="chip" onClick={() => onPost(post, "active")}>Restore</button>
+                <ConfirmBtn danger onConfirm={() => onPost(post, "hidden")}>Hide</ConfirmBtn>{" "}
+                <ConfirmBtn danger onConfirm={() => onPost(post, "removed")}>Remove</ConfirmBtn>{" "}
+                <ConfirmBtn onConfirm={() => onPost(post, "active")}>Restore</ConfirmBtn>
               </span>
             </div>
           </div>
@@ -340,10 +358,10 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
       {authorId && (
         <div className="row">
           <span>
-            <button className="chip" onClick={() => onUser(authorId, "warn")}>Warn</button>{" "}
-            <button className="chip" onClick={() => onUser(authorId, "suspended", { status: "suspended" })}>Suspend</button>{" "}
-            <button className="chip" onClick={() => onUser(authorId, "banned", { status: "banned" })}>Ban</button>{" "}
-            <button className="chip" onClick={() => onUser(authorId, "restored", { status: "active" })}>Restore</button>
+            <ConfirmBtn onConfirm={() => onUser(authorId, "warn")}>Warn</ConfirmBtn>{" "}
+            <ConfirmBtn danger onConfirm={() => onUser(authorId, "suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
+            <ConfirmBtn danger onConfirm={() => onUser(authorId, "banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
+            <ConfirmBtn onConfirm={() => onUser(authorId, "restored", { status: "active" })}>Restore</ConfirmBtn>
           </span>
         </div>
       )}
@@ -351,7 +369,7 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser }) {
       <div className="row">
         <span>
           {["reviewed", "resolved", "dismissed"].map((s) => (
-            <span key={s}><button className="chip" onClick={() => onStatus(s)}>Mark {s}</button>{" "}</span>
+            <span key={s}><ConfirmBtn onConfirm={() => onStatus(s)}>Mark {s}</ConfirmBtn>{" "}</span>
           ))}
         </span>
       </div>
@@ -409,14 +427,14 @@ function PostsPage({ adminId }) {
 
   const Card = ({ p }) => (
     <div className="card">
-      <div className="row"><b>{p.display_name || "Member"}</b><Pill v={p.status} /></div>
+      <div className="row"><b>{p.display_name || "Member"}</b><span><Pill v={p.visibility} /> <Pill v={p.status} /></span></div>
       <p>{p.body}</p>
-      <p className="mu" style={{ margin: 0 }}>{p.id} · {new Date(p.created_at).toLocaleString()} · {p.visibility}</p>
+      <p className="mu" style={{ margin: 0 }}>author {String(p.user_id || "?").slice(0, 8)}… · {p.id} · {new Date(p.created_at).toLocaleString()}</p>
       <div className="row" style={{ marginTop: 8 }}>
         <span>
-          <button className="chip" onClick={() => setStatus(p, "hidden")}>Hide</button>{" "}
-          <button className="chip" onClick={() => setStatus(p, "removed")}>Remove</button>{" "}
-          <button className="chip" onClick={() => setStatus(p, "active")}>Restore</button>
+          <ConfirmBtn danger onConfirm={() => setStatus(p, "hidden")}>Hide</ConfirmBtn>{" "}
+          <ConfirmBtn danger onConfirm={() => setStatus(p, "removed")}>Remove</ConfirmBtn>{" "}
+          <ConfirmBtn onConfirm={() => setStatus(p, "active")}>Restore</ConfirmBtn>
         </span>
       </div>
     </div>
@@ -531,10 +549,10 @@ function UsersPage({ adminId }) {
           {sel.bio ? <p>{sel.bio}</p> : null}
           <div className="row">
             <span>
-              <button className="chip" onClick={() => act("warn")}>Warn</button>{" "}
-              <button className="chip" onClick={() => act("suspended", { status: "suspended" })}>Suspend</button>{" "}
-              <button className="chip" onClick={() => act("banned", { status: "banned" })}>Ban</button>{" "}
-              <button className="chip" onClick={() => act("restored", { status: "active" })}>Restore</button>
+              <ConfirmBtn onConfirm={() => act("warn")}>Warn</ConfirmBtn>{" "}
+              <ConfirmBtn danger onConfirm={() => act("suspended", { status: "suspended" })}>Suspend</ConfirmBtn>{" "}
+              <ConfirmBtn danger onConfirm={() => act("banned", { status: "banned" })}>Ban</ConfirmBtn>{" "}
+              <ConfirmBtn onConfirm={() => act("restored", { status: "active" })}>Restore</ConfirmBtn>
             </span>
           </div>
           <h2>Posts ({posts.length})</h2>

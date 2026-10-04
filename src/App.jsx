@@ -63,6 +63,16 @@ export default function App() {
   const [authMode, setAuthMode] = useState("start");
   // Status of a just-completed OAuth redirect (shown on the landing page).
   const [oauthNote, setOauthNote] = useState(null);
+  // Session restore state: gates the launch splash below.
+  const [authReady, setAuthReady] = useState(false);
+  // Full-screen signing-in veil: true from first paint when we land back
+  // from Google (?code=...), cleared once the session is processed.
+  const [oauthBusy, setOauthBusy] = useState(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      return q.has("code") && !q.has("error");
+    } catch { return false; }
+  });
   const [sheet, setSheet] = useState(null);
   const [modal, setModal] = useState(null);
   const [filters, setFilters] = useState({ time: "all", stage: "all" });
@@ -141,12 +151,16 @@ export default function App() {
 
   // Track the session for the life of the app so refreshes, restores and
   // token refreshes keep the user signed in (persisted by supabase-js).
+  // authReady flips on the first auth event (or a safety timeout) so a
+  // returning account holder never sees onboarding flash before restore.
   useEffect(() => {
     let sub = null;
+    const readyTimer = setTimeout(() => setAuthReady(true), 6000);
     (async () => {
       try {
         const a = supabase();
         const { data } = a.auth.onAuthStateChange(async (ev, session) => {
+          setAuthReady(true);
           if (ev === "PASSWORD_RECOVERY") { open("setpw"); return; }
           if (ev === "SIGNED_OUT") { setUser(null); return; }
           if (session?.user) {
@@ -196,12 +210,13 @@ export default function App() {
             if (!done) {
               setOauthNote({ kind: "error", text: "Google sign-in didn't complete. The link may have expired — please try again." });
             }
+            setOauthBusy(false);
             cleanUrl();
           }
         }
       } catch {}
     })();
-    return () => { try { sub?.unsubscribe(); } catch {} };
+    return () => { clearTimeout(readyTimer); try { sub?.unsubscribe(); } catch {} };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -408,14 +423,14 @@ export default function App() {
     return null;
   };
 
-  // Switch an own post between Only me (private) and Anonymous.
+  // Switch an own post between Only me, Anonymous and Public.
   // Returns an error string, or null on success.
   const setPostVisibility = async (post, visibility) => {
-    const v = visibility === "me" ? "me" : "anon";
+    const v = visibility === "me" ? "me" : visibility === "com" ? "com" : "anon";
     update((prev) => ({ posts: prev.posts.map((p) => (p.id === post.id ? { ...p, v } : p)) }));
     if (user && !String(post.id).startsWith("p")) {
       try {
-        const { error } = await supabase().from("posts").update({ visibility: v === "me" ? "private" : "anon" }).eq("id", post.id);
+        const { error } = await supabase().from("posts").update({ visibility: v === "me" ? "private" : v === "com" ? "community" : "anon" }).eq("id", post.id);
         if (error) throw error;
         await refreshPosts();
       } catch (e) {
@@ -451,9 +466,38 @@ export default function App() {
     setTab("home"); setOb(0); setAuthMode("start"); close();
   };
 
+  // Full-screen signing-in state while a Google redirect is processed.
+  const veil = oauthBusy ? (
+    <div className="oauth-veil">
+      <div className="oauth-box">
+        <span className="tdots" aria-label="Completing sign-in"><i /><i /><i /></span>
+        <h2>Completing Google sign-in…</h2>
+        <p className="mu">This takes a few seconds.</p>
+      </div>
+    </div>
+  ) : null;
+
   if (!store.done) {
+    // While the session is still resolving, show a launch splash instead of
+    // onboarding: an account holder with synced progress goes straight home
+    // once restore lands, never flashing setup screens first.
+    if (!authReady && !oauthBusy) {
+      return (
+        <div id="app">
+          <div className="oauth-veil">
+            <div className="oauth-box">
+              <span className="tdots" aria-label="Loading"><i /><i /><i /></span>
+              <h2>Loading Steady…</h2>
+            </div>
+          </div>
+          <main id="main" />
+          <nav id="nav" />
+        </div>
+      );
+    }
     return (
       <div id="app">
+        {veil}
         <main id="main">
           <Onboarding store={store} update={update} ob={ob} setOb={setOb} authMode={authMode} setAuthMode={setAuthMode}
             onFinish={onFinishOnboarding} onAuth={onAuth} notice={oauthNote} />
@@ -483,6 +527,7 @@ export default function App() {
   if (adminPath != null) {
     return (
       <div id="app">
+        {veil}
         <main id="main">
           <AdminApp
             user={user} mod={mod} path={adminPath} store={store} update={update}
@@ -503,6 +548,7 @@ export default function App() {
     const banned = mod.status === "banned";
     return (
       <div id="app">
+        {veil}
         <main id="main">
           <div className="ob in">
             <h1>{banned ? "Account deactivated" : "Account suspended"}</h1>
@@ -543,6 +589,7 @@ export default function App() {
 
   return (
     <div id="app">
+      {veil}
       <main id="main">
         {tab === "home" && <Home store={store} actions={sheetActions} />}
         {tab === "rec" && <Recovery store={store} actions={sheetActions} />}

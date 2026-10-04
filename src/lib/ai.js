@@ -29,7 +29,12 @@ export async function chatReply({ message, history }) {
   if (!res.ok) throw new Error("API:" + (data?.error || res.status));
   if (!data?.reply) throw new Error("API:empty");
   if (data?.fallback) console.warn("[beacon] saved fallback reply, reason:", data?.reason || "unknown");
-  return { text: data.reply, fallback: !!data.fallback };
+  return {
+    text: data.reply,
+    fallback: !!data.fallback,
+    unavailable: !!data.unavailable,
+    retryAfterSeconds: Number(data.retryAfterSeconds) || 0,
+  };
 }
 
 export function aiErrorMessage(e) {

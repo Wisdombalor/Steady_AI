@@ -18,7 +18,8 @@ export function Community({ store, filters, setFilters, onOpen, user, actions, o
   const flip = async (p) => {
     if (!onVisibility) return;
     setVisErr("");
-    const msg = await onVisibility(p, p.v === "me" ? "anon" : "me");
+    const next = p.v === "me" ? "anon" : p.v === "anon" ? "com" : "me";
+    const msg = await onVisibility(p, next);
     if (msg) setVisErr(msg);
   };
 
@@ -58,13 +59,13 @@ export function Community({ store, filters, setFilters, onOpen, user, actions, o
                 <b>{nm}</b>{p.s ? <span className="tag">Example</span> : null}
               </button>
             )}
-            <span className="mu">{p.stage}{p.v === "me" ? " · only you" : p.mine ? " · anonymous" : ""}</span>
+            <span className="mu">{p.stage}{p.v === "me" ? " · only you" : p.v === "anon" ? " · anonymous" : " · public"}</span>
           </div>
           <p>{p.t}</p>
           <div className="row"><span className="mu">{new Date(p.d).toLocaleDateString()}</span>
             <span>
-              {user && p.mine && (p.v === "me" || p.v === "anon") && onVisibility && (
-                <><button className="mu" onClick={() => flip(p)}>{p.v === "me" ? "Make anonymous" : "Make private"}</button>{" · "}</>
+              {user && p.mine && onVisibility && (
+                <><button className="mu" onClick={() => flip(p)}>{p.v === "me" ? "Make anonymous" : p.v === "anon" ? "Make public" : "Make private"}</button>{" · "}</>
               )}
               {p.mine
                 ? (user ? <button className="mu" onClick={() => onOpen("del", p)}>Delete</button> : null)
