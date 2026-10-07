@@ -5,7 +5,7 @@ import { supabase, loadPosts, sendReport, insertPost, getModState, syncProfile }
 import { AdminApp } from "./components/Admin";
 import { aerr, daysSince } from "./lib/helpers";
 import { Nav, Sheet, Modal } from "./components/Chrome";
-import { Onboarding, Login, Signup } from "./components/Onboarding";
+import { Onboarding, Login, Signup, RecoverySetup } from "./components/Onboarding";
 import { GoogleIcon } from "./components/Icons";
 import { Home } from "./components/Home";
 import { Recovery } from "./components/Recovery";
@@ -234,7 +234,7 @@ export default function App() {
         const keep = { posts: storeRef.current.posts, outbox: storeRef.current.outbox };
         const next = migrate({ ...freshStore(), ...d, ...keep, checks: d.checks || [] });
         replaceAll(next);
-        if (!next.done) setOb(returning ? 2 : 1);
+        if (!next.done && !returning) setOb(1);
       } else if (storeRef.current.done) doPush();
     } catch {}
     try {
@@ -261,7 +261,14 @@ export default function App() {
     } catch {}
     if (!fresh) return;
     if (storeRef.current.done) { close(); setTab("home"); }
-    else setOb(returning ? 2 : 1);
+    else if (returning) {
+      // Existing account, no setup data anywhere: use what's on record
+      // (name/email) and go home. Missing pieces (start date) are offered
+      // in-app via nudge instead of forced onboarding.
+      update({ done: 1 });
+      close(); setTab("home");
+    }
+    else setOb(1);
   };
 
   // Accounts older than this at sign-in count as returning (not fresh signups).
@@ -656,6 +663,13 @@ export default function App() {
         {sheet?.name === "profile" && sheet.payload && <ProfileSheet post={sheet.payload} store={store} actions={sheetActions} />}
         {sheet?.name === "req" && <RequestSheet store={store} update={update} actions={sheetActions} />}
         {sheet?.name === "relapse" && <RelapseSheet onNew={newPeriod} onClose={close} />}
+        {sheet?.name === "startdate" && (
+          <RecoverySetup
+            store={store} update={update}
+            onFinish={() => { update({ done: 1 }); close(); }}
+            onBack={close}
+          />
+        )}
         {sheet?.name === "wipe" && <WipeSheet onConfirm={wipeAll} onCancel={close} />}
         {sheet?.name === "confirmLogout" && (
           <ConfirmSheet

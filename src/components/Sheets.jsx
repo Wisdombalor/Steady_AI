@@ -410,12 +410,29 @@ export function RequestSheet({ store, update, actions }) {
     setState("done");
   };
 
-  if (state === "sending") return <h2>Sending…</h2>;
+  if (state === "sending") {
+    return (
+      <>
+        <h2>Sending your request…</h2>
+        <p className="mu">Please wait a moment.</p>
+        <span className="tdots" aria-label="Sending"><i /><i /><i /></span>
+      </>
+    );
+  }
   if (state === "done") {
     return ok ? (
-      <><h2>Request received</h2><p>Thanks. We&apos;ll be in touch.</p><button className="btn" onClick={actions.close}>Done</button></>
+      <div className="confirm-in">
+        <h2>Request sent</h2>
+        <p className="mu">Thanks, {name.trim() || "friend"}. We&apos;ll be in touch via {pref.toLowerCase()}.</p>
+        <button className="btn" onClick={actions.close}>Done</button>
+      </div>
     ) : (
-      <><h2>Saved, not sent yet</h2><p className="mu">We couldn&apos;t reach the mail service from here. Your request is saved on this device and will be sent once the app is hosted with a connection.</p><button className="btn" onClick={actions.close}>Done</button></>
+      <div className="confirm-in">
+        <h2>Couldn&apos;t send it</h2>
+        <p className="mu">We couldn&apos;t reach the support service. Your request is saved on this device and will be sent automatically once you&apos;re back online.</p>
+        <button className="btn" onClick={() => { setState("form"); }}>Try again</button>
+        <button className="btn sec" style={{ marginTop: 8 }} onClick={actions.close}>Done</button>
+      </div>
     );
   }
   return (
@@ -655,7 +672,7 @@ export function AiSheet({ store, update }) {
           {!chats.length && <p className="mu">No conversations yet. Start one below.</p>}
         </div>
         <div className="ai-input">
-          <button className="btn" onClick={newChat}>Start a new conversation</button>
+          <button className="btn" style={{ width: "100%" }} onClick={newChat}>Start a new conversation</button>
         </div>
       </div>
     );

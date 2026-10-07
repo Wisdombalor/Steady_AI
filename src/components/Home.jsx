@@ -29,6 +29,16 @@ export function CheckCard({ store, onCheck }) {
   return <div className="card"><b>How are you doing today?</b><p className="mu">A 20-second check-in helps you see patterns.</p><button className="btn sec" onClick={() => onCheck("check")}>Check in</button></div>;
 }
 
+export function StartDateNudge({ actions }) {
+  return (
+    <div className="card">
+      <b>When did your recovery start?</b>
+      <p className="mu" style={{ margin: "4px 0 8px" }}>Set your date to start your day counter.</p>
+      <button className="btn sec" onClick={() => actions.open("startdate")}>Set start date</button>
+    </div>
+  );
+}
+
 export function Home({ store, actions }) {
   const h = new Date().getHours();
   const g = h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
@@ -36,7 +46,13 @@ export function Home({ store, actions }) {
   return (
     <div className="in">
       <h1>Good {g}, {store.name}</h1>
-      <div id="ctr"><Counter store={store} /><p className="saved">Saved so far <b>{fm(store, moneySaved(store))}</b></p></div>
+      {store.start ? (
+        <>
+          <div id="ctr"><Counter store={store} /><p className="saved">Saved so far <b>{fm(store, moneySaved(store))}</b></p></div>
+        </>
+      ) : (
+        <StartDateNudge actions={actions} />
+      )}
       <CheckCard store={store} onCheck={actions.open} />
       <button className="urge" onClick={() => actions.open("urge")}>I&apos;m having an urge</button>
       <div className="grid">
@@ -48,7 +64,9 @@ export function Home({ store, actions }) {
       <div className="grid" style={{ marginTop: 12 }}>
         <div className="card stat"><b>{store.urges.length}</b><span className="mu">Urges logged</span></div>
         <div className="card stat"><b>{ok}</b><span className="mu">Urge went down</span></div>
-        <div className="card stat"><b>{bestStreak(store)}</b><span className="mu">Longest (days)</span></div>
+        {store.start ? (
+          <div className="card stat"><b>{bestStreak(store)}</b><span className="mu">Longest (days)</span></div>
+        ) : null}
       </div>
       {store.test == null && (
         <div className="card"><b>Not sure if gambling is a problem?</b><p className="mu">Take a 2-minute self-check.</p><button className="btn sec" onClick={() => actions.open("selfcheck")}>Take the self-check</button></div>

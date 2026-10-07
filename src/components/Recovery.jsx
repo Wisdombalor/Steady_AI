@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { daysSince, moneySaved, bestStreak, fm, urgeTrigs, urgeEmos } from "../lib/helpers";
 import { Chips } from "./Chrome";
-import { Insights } from "./Home";
+import { Insights, StartDateNudge } from "./Home";
 
 const DAY = 864e5;
 
@@ -36,11 +36,15 @@ export function Recovery({ store, actions }) {
   return (
     <div className="in">
       <h1>Recovery</h1>
+      {store.start ? (
       <div className="grid">
         <div className="card stat"><b>{daysSince(store.start)}</b><span className="mu">Current days</span></div>
         <div className="card stat"><b>{bestStreak(store)}</b><span className="mu">Longest</span></div>
         <div className="card stat"><b>{fm(store, moneySaved(store))}</b><span className="mu">Saved</span></div>
       </div>
+      ) : (
+      <StartDateNudge actions={actions} />
+      )}
       <p className="mu">A hard day doesn&apos;t erase progress. Every period is kept.</p>
       <Insights store={store} />
       <div className="row">

@@ -30,77 +30,36 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const apiKey = Deno.env.get("GEMINI_API_KEY");
-    if (!apiKey) {
-      return json({ error: "GEMINI_API_KEY secret is not set in Supabase." }, 500);
-    }
-
     const { message, history } = await req.json().catch(() => ({ message: "Hello" }));
     const text = typeof message === "string" && message.trim() ? message : "Hello";
 
-    const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
+    // Shared turn list for every provider (roles normalized to user/model).
+    const turns: Array<{ role: string; text: string }> = [];
     if (Array.isArray(history)) {
       for (const h of history.slice(-10)) {
         if (!h || typeof h.text !== "string" || !h.text.trim()) continue;
-        contents.push({
-          role: h.role === "model" ? "model" : "user",
-          parts: [{ text: h.text.slice(0, 2000) }],
-        });
+        turns.push({ role: h.role === "model" ? "model" : "user", text: h.text.slice(0, 2000) });
       }
     }
+
+    const contents: Array<{ role: string; parts: Array<{ text: string }> }> =
+      turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] }));
     contents.push({ role: "user", parts: [{ text: text.slice(0, 4000) }] });
 
-    // Stable generateContent endpoint (the Interactions API shape was
-    // returning unparseable responses, which collapsed every reply
-    // into the identical fallback below).
-    const endpoint =
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-    const delays = [1200, 2500];
-    let reply = "";
-    let lastStatus = 0;
-    let lastError = "";
-    let retryAfterSeconds = 0;
-
-    for (let attempt = 0; attempt <= delays.length; attempt++) {
-      try {
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-            contents,
-            generationConfig: { maxOutputTokens: 512 },
-          }),
-        });
-
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          lastStatus = res.status;
-          const e = data?.error;
-          lastError = String(typeof e === "string" ? e : (e?.message || JSON.stringify(e) || "")).slice(0, 200);
-          // 429s often carry RetryInfo.retryDelay ("34s") — the exact wait.
-          const details = Array.isArray(data?.error?.details) ? data.error.details : [];
-          for (const d of details) {
-            if (String(d?.["@type"] || "").includes("RetryInfo") && d?.retryDelay != null) {
-              const m = String(d.retryDelay).match(/([\d.]+)/);
-              if (m) retryAfterSeconds = Math.max(retryAfterSeconds, Math.ceil(parseFloat(m[1])));
-            }
-          }
-        }
-        const parts = data?.candidates?.[0]?.content?.parts;
-        if (Array.isArray(parts)) {
-          reply = parts.filter((p: any) => typeof p?.text === "string").map((p: any) => p.text).join("").trim();
-        }
-        if (reply) break;
-
-        if (attempt < delays.length && (res.status === 503 || res.status === 429)) {
-          await sleep(delays[attempt]);
-          continue;
-        }
-        break;
-      } catch (_) {
-        if (attempt < delays.length) await sleep(delays[attempt]);
+    let via = "";
+    const g = await tryGemini(contents);
+    let reply = g.reply;
+    if (reply) {
+      via = "gemini";
+    } else {
+      // Free failover chain while Google is down: Groq's free tier first
+      // (needs a GROQ_API_KEY secret), then keyless Pollinations.
+      reply = await tryGroq(turns, text);
+      if (reply) {
+        via = "groq";
+      } else {
+        reply = await tryPollinations(turns, text);
+        if (reply) via = "pollinations";
       }
     }
 
@@ -109,17 +68,154 @@ Deno.serve(async (req) => {
     // below are what diagnose a stuck fallback (400 = bad key,
     // 404 = model not available, 429 = quota exhausted).
     if (!reply) {
-      console.error(`[chat] gemini failed status=${lastStatus} err=${lastError}`);
-      // Quota exhaustion (429) is a resting state, not a glitch: tell the
-      // app to park Beacon until tokens restore instead of looping fallbacks.
-      if (lastStatus === 429) {
-        return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true, unavailable: true, reason: "gemini_429", retryAfterSeconds });
+      if (g.outOfTokens) {
+        // Quota exhaustion (429) with no working failover is a resting
+        // state, not a glitch: tell the app to park Beacon until tokens
+        // restore instead of looping fallbacks.
+        return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true, unavailable: true, reason: "gemini_429", retryAfterSeconds: g.retryAfter });
       }
-      return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true, reason: lastStatus ? `gemini_${lastStatus}` : "gemini_empty" });
+      return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true, reason: g.reason });
     }
-    return json({ reply });
+    return json({ reply, via });
   } catch (e) {
     console.error(`[chat] exception ${String(e).slice(0, 200)}`);
     return json({ reply: SAFETY_FALLBACK_REPLY, fallback: true, reason: "exception" });
   }
 });
+
+// --- providers -------------------------------------------------------------
+
+type GeminiResult = { reply: string; outOfTokens: boolean; reason: string; retryAfter: number };
+
+async function tryGemini(
+  contents: Array<{ role: string; parts: Array<{ text: string }> }>,
+): Promise<GeminiResult> {
+  const fail = (reason: string, outOfTokens = false, retryAfter = 0): GeminiResult =>
+    ({ reply: "", outOfTokens, reason, retryAfter });
+  const apiKey = Deno.env.get("GEMINI_API_KEY");
+  if (!apiKey) {
+    console.error("[chat] GEMINI_API_KEY secret is not set in Supabase.");
+    return fail("gemini_nokey");
+  }
+  // Stable generateContent endpoint (the Interactions API shape was
+  // returning unparseable responses, which collapsed every reply
+  // into the identical fallback below).
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const delays = [1200, 2500];
+  let reply = "";
+  let lastStatus = 0;
+  let lastError = "";
+  let retryAfter = 0;
+
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+          contents,
+          generationConfig: { maxOutputTokens: 512 },
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        lastStatus = res.status;
+        const e = data?.error;
+        lastError = String(typeof e === "string" ? e : (e?.message || JSON.stringify(e) || "")).slice(0, 200);
+        // 429s often carry RetryInfo.retryDelay ("34s") — the exact wait.
+        const details = Array.isArray(data?.error?.details) ? data.error.details : [];
+        for (const d of details) {
+          if (String(d?.["@type"] || "").includes("RetryInfo") && d?.retryDelay != null) {
+            const m = String(d.retryDelay).match(/([\d.]+)/);
+            if (m) retryAfter = Math.max(retryAfter, Math.ceil(parseFloat(m[1])));
+          }
+        }
+      }
+      const parts = data?.candidates?.[0]?.content?.parts;
+      if (Array.isArray(parts)) {
+        reply = parts.filter((p: any) => typeof p?.text === "string").map((p: any) => p.text).join("").trim();
+      }
+      if (reply) break;
+
+      if (attempt < delays.length && (res.status === 503 || res.status === 429)) {
+        await sleep(delays[attempt]);
+        continue;
+      }
+      break;
+    } catch (_) {
+      if (attempt < delays.length) await sleep(delays[attempt]);
+    }
+  }
+
+  if (!reply) {
+    console.error(`[chat] gemini failed status=${lastStatus} err=${lastError}`);
+    return fail(lastStatus ? `gemini_${lastStatus}` : "gemini_empty", lastStatus === 429, retryAfter);
+  }
+  return { reply, outOfTokens: false, reason: "", retryAfter: 0 };
+}
+
+// Groq free tier (OpenAI-compatible). Needs GROQ_API_KEY secret; skipped
+// silently when unset so the chain falls through to Pollinations.
+async function tryGroq(
+  turns: Array<{ role: string; text: string }>,
+  text: string,
+): Promise<string> {
+  const apiKey = Deno.env.get("GROQ_API_KEY");
+  if (!apiKey) return "";
+  try {
+    const messages: Array<{ role: string; content: string }> = [
+      { role: "system", content: SYSTEM_INSTRUCTION },
+      ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
+      { role: "user", content: text.slice(0, 4000) },
+    ];
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages,
+        max_tokens: 512,
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error(`[chat] groq failed status=${res.status} err=${String(data?.error?.message || JSON.stringify(data?.error) || "").slice(0, 200)}`);
+      return "";
+    }
+    const out = data?.choices?.[0]?.message?.content;
+    return typeof out === "string" ? out.trim() : "";
+  } catch (e) {
+    console.error(`[chat] groq exception ${String(e).slice(0, 200)}`);
+    return "";
+  }
+}
+
+// Keyless public inference (Pollinations). Last resort before the saved
+// reply: no secret needed, quality varies, still guided by the system rules.
+async function tryPollinations(
+  turns: Array<{ role: string; text: string }>,
+  text: string,
+): Promise<string> {
+  try {
+    const convo = turns.map((t) => `${t.role === "model" ? "Beacon" : "User"}: ${t.text}`).join("\n").slice(-3000);
+    const prompt = `${SYSTEM_INSTRUCTION}\n\n${convo}\nUser: ${text.slice(0, 1500)}\nBeacon:`;
+    const res = await fetch(
+      `https://text.pollinations.ai/${encodeURIComponent(prompt)}?model=openai`,
+      { signal: AbortSignal.timeout(25000) },
+    );
+    if (!res.ok) {
+      console.error(`[chat] pollinations failed status=${res.status}`);
+      return "";
+    }
+    const out = await res.text();
+    return out.trim().slice(0, 2000);
+  } catch (e) {
+    console.error(`[chat] pollinations exception ${String(e).slice(0, 200)}`);
+    return "";
+  }
+}

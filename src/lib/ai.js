@@ -29,11 +29,13 @@ export async function chatReply({ message, history }) {
   if (!res.ok) throw new Error("API:" + (data?.error || res.status));
   if (!data?.reply) throw new Error("API:empty");
   if (data?.fallback) console.warn("[beacon] saved fallback reply, reason:", data?.reason || "unknown");
+  else if (data?.via && data.via !== "gemini") console.info("[beacon] reply via failover:", data.via);
   return {
     text: data.reply,
     fallback: !!data.fallback,
     unavailable: !!data.unavailable,
     retryAfterSeconds: Number(data.retryAfterSeconds) || 0,
+    via: data.via || "gemini",
   };
 }
 
