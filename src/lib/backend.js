@@ -13,10 +13,13 @@ export function supabase() {
 
 export async function sendReport(subject, f, onQueued) {
   try {
+    // Never hang forever: a stuck mail service must resolve to the queued
+    // path (with its retry UI) instead of a permanent "sending" state.
     const r = await fetch(FORM, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ _subject: subject, _captcha: "false", _template: "table", ...f }),
+      signal: AbortSignal.timeout(20000),
     });
     if (!r.ok) throw new Error("send failed");
     return true;

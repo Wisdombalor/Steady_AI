@@ -396,34 +396,37 @@ export function RequestSheet({ store, update, actions }) {
   const [err, setErr] = useState("");
   const [state, setState] = useState("form");
   const [ok, setOk] = useState(false);
+  const [sending, setSending] = useState(false);
+  // Guards late responses: only the latest submit may change state, so
+  // cancelling can never be overridden by a hung request resolving late.
+  const reqId = useRef(0);
 
   const submit = async () => {
+    if (sending) return;
     if (!name.trim()) { setErr("Enter your name."); return; }
     const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact.trim());
     const phoneOk = /^\+?[0-9\s\-()]+$/.test(contact.trim()) && contact.replace(/\D/g, "").length >= 7;
     if (!emailOk && !phoneOk) { setErr("Enter a valid email address or phone number."); return; }
-    setState("sending");
+    const id = ++reqId.current;
+    setErr("");
+    setSending(true);
     const sent = await sendReport("Steady: new support request",
       { name, contact, preferred: pref, message: msg, country: CO[store.country].n },
       (o) => update({ outbox: [...store.outbox, o] }));
+    if (reqId.current !== id) return;
+    setSending(false);
     setOk(sent);
     setState("done");
   };
 
-  if (state === "sending") {
-    return (
-      <>
-        <h2>Sending your request…</h2>
-        <p className="mu">Please wait a moment.</p>
-        <span className="tdots" aria-label="Sending"><i /><i /><i /></span>
-      </>
-    );
-  }
+  const cancelSend = () => { reqId.current++; setSending(false); };
+
   if (state === "done") {
     return ok ? (
-      <div className="confirm-in">
+      <div className="confirm-in" style={{ textAlign: "center" }}>
+        <svg className="ck" viewBox="0 0 80 80" style={{ margin: "6px auto" }}><circle cx={40} cy={40} r={32} /><path d="M26 41l10 10 19-21" /></svg>
         <h2>Request sent</h2>
-        <p className="mu">Thanks, {name.trim() || "friend"}. We&apos;ll be in touch via {pref.toLowerCase()}.</p>
+        <p className="mu">Thanks, {name.trim() || "friend"}. We&apos;ll be in touch via {pref.toLowerCase()} at {contact.trim()}.</p>
         <button className="btn" onClick={actions.close}>Done</button>
       </div>
     ) : (
@@ -438,14 +441,20 @@ export function RequestSheet({ store, update, actions }) {
   return (
     <>
       <h2>Request support</h2>
-      <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-      <input placeholder="Email or phone" value={contact} onChange={(e) => setContact(e.target.value)} />
+      <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} disabled={sending} />
+      <input placeholder="Email or phone" value={contact} onChange={(e) => setContact(e.target.value)} disabled={sending} />
       <label>How should we contact you?
-        <select value={pref} onChange={(e) => setPref(e.target.value)}><option>Email</option><option>Phone call</option><option>Both</option></select>
+        <select value={pref} onChange={(e) => setPref(e.target.value)} disabled={sending}><option>Email</option><option>Phone call</option><option>Both</option></select>
       </label>
-      <textarea rows={3} placeholder="What would you like help with?" value={msg} onChange={(e) => setMsg(e.target.value)} />
+      <textarea rows={3} placeholder="What would you like help with?" value={msg} onChange={(e) => setMsg(e.target.value)} disabled={sending} />
       <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
-      <button className="btn" onClick={submit}>Request support</button>
+      <button className="btn" disabled={sending} onClick={submit}>{sending ? "Sending…" : "Request support"}</button>
+      {sending && (
+        <p className="mu" style={{ textAlign: "center", marginTop: 8 }}>
+          <span className="tdots" aria-label="Sending"><i /><i /><i /></span>{" "}
+          <button className="tel" onClick={cancelSend}>Cancel</button>
+        </p>
+      )}
     </>
   );
 }
