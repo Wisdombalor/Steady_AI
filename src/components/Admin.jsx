@@ -78,9 +78,9 @@ export function AdminApp({ user, mod, path, store, update, onAuth, authMode, set
           <button className="btn sec" onClick={onExit}>← Back to Steady</button>
           {confirmSignOut ? (
             <div className="card" style={{ marginTop: 8 }}>
-              <b>Log out?</b>
-              <p className="mu">You can log back in anytime with the same account.</p>
-              <button className="btn" onClick={onSignOut}>Log out</button>
+              <b>Sign out?</b>
+              <p className="mu">You can sign back in anytime with the same account.</p>
+              <button className="btn" onClick={onSignOut}>Sign out</button>
               <button className="btn sec" style={{ marginTop: 8 }} onClick={() => setConfirmSignOut(false)}>Cancel</button>
             </div>
           ) : (

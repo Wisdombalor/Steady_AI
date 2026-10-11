@@ -80,7 +80,7 @@ function Welcome({ store, update, setAuthMode, onAuth, notice }) {
   };
 
   return (
-    <div className="ob in">
+    <form className="ob in" noValidate onSubmit={(e) => { e.preventDefault(); cont(); }}>
       <h1>Welcome to Steady</h1>
       <p className="mu">A recovery companion for the moments that matter. It isn&apos;t a therapist or an emergency service.</p>
       <label>What should we call you? (required)
@@ -91,19 +91,19 @@ function Welcome({ store, update, setAuthMode, onAuth, notice }) {
           {Object.entries(CO).map(([k, v]) => <option key={k} value={k}>{v.n}</option>)}
         </select>
       </label>
-      <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
-      <button className="btn" onClick={cont}>Continue</button>
+      <p role="alert" style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
+      <button type="submit" className="btn">Continue on this device</button>
       {notice && (
         <p className="mu" style={{ textAlign: "center", margin: "12px 0 0", ...(notice.kind === "error" ? { color: "var(--bad)" } : null) }}>
           {notice.text}
         </p>
       )}
-      <p className="mu" style={{ textAlign: "center", margin: "16px 0 8px" }}>or, optionally, create an account</p>
-      <button className="btn sec" onClick={() => onAuth({ provider: "google", country })}>{GoogleIcon}Continue with Google</button>
-      <button className="btn sec" onClick={() => { update({ name: normalizeName(name), country }); setAuthMode("signup"); }} style={{ marginTop: 8 }}>{MailIcon}Sign up with email</button>
+      <p className="mu" style={{ textAlign: "center", margin: "16px 0 8px" }}>Or save your progress with an account</p>
+      <button type="button" className="btn sec" onClick={() => onAuth({ provider: "google", country })}>{GoogleIcon}Continue with Google</button>
+      <button type="button" className="btn sec" onClick={() => { update({ name: normalizeName(name), country }); setAuthMode("signup"); }} style={{ marginTop: 8 }}>{MailIcon}Sign up with email</button>
       <p className="mu" style={{ marginTop: 8 }}>{msg}</p>
-      <p className="mu" style={{ textAlign: "center" }}>Already have an account? <button className="tel" onClick={() => { update({ name: normalizeName(name), country }); setAuthMode("login"); }}>Log in</button></p>
-    </div>
+      <p className="mu" style={{ textAlign: "center" }}>Already have an account? <button type="button" className="tel" onClick={() => { update({ name: normalizeName(name), country }); setAuthMode("login"); }}>Log in</button></p>
+    </form>
   );
 }
 
@@ -117,6 +117,7 @@ export function Signup({ store, update, setAuthMode, onAuth }) {
   const [exists, setExists] = useState(null);
 
   const submit = async () => {
+    if (busy) return;
     const clean = normalizeName(name);
     if (clean.length < 2) { setErr("Please enter your name."); return; }
     if (!isValidName(clean)) { setErr("Please use letters only for your name — no numbers or symbols."); return; }
@@ -148,17 +149,17 @@ export function Signup({ store, update, setAuthMode, onAuth }) {
   }
 
   return (
-    <div className="ob in">
-      <button className="chip" onClick={() => setAuthMode("start")}><BackIcon /> Back</button>
+    <form className="ob in" noValidate onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      <button type="button" className="chip" onClick={() => setAuthMode("start")}><BackIcon /> Back</button>
       <h1>Sign up with email</h1>
       <label>Your name (required)<input autoComplete="name" value={name} onChange={(e) => setName(sanitizeNameInput(e.target.value))} /></label>
       <label>Email<input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
       <label>Password<PasswordInput autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} /></label>
       <PwChecklist pw={pw} />
-      <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
-      <button className="btn" disabled={busy} onClick={submit}>{busy ? "Creating account…" : "Create account"}</button>
-      <p className="mu" style={{ textAlign: "center", marginTop: 14 }}>Already have an account? <button className="tel" onClick={() => setAuthMode("login")}>Log in</button></p>
-    </div>
+      <p role="alert" style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
+      <button type="submit" className="btn" disabled={busy}>{busy ? "Creating account…" : "Create account"}</button>
+      <p className="mu" style={{ textAlign: "center", marginTop: 14 }}>Already have an account? <button type="button" className="tel" onClick={() => setAuthMode("login")}>Log in</button></p>
+    </form>
   );
 }
 
@@ -186,6 +187,7 @@ export function Login({ setAuthMode, onAuth }) {
   }, [cooldown]);
 
   const submit = async () => {
+    if (busy) return;
     if (!email || !pw) { setErr("Enter your email and password."); return; }
     setBusy(true);
     const msg = await onAuth({ login: { email: email.trim(), password: pw } });
@@ -256,30 +258,30 @@ export function Login({ setAuthMode, onAuth }) {
         <button className="btn" disabled={cooldown > 0 || resetBusy} onClick={requestReset}>
           {resetBusy ? "Sending…" : cooldown > 0 ? `Resend link in ${fmtCountdown(cooldown)}` : "Resend link"}
         </button>
-        <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "8px 0 0" }}>{err}</p>
+        <p role="alert" style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "8px 0 0" }}>{err}</p>
         <p className="mu" style={{ textAlign: "center", marginTop: 14 }}><button className="tel" onClick={() => { setResetSent(null); setResent(false); }}>Back to log in</button></p>
       </div>
     );
   }
 
   return (
-    <div className="ob in">
-      <button className="chip" onClick={() => setAuthMode("start")}><BackIcon /> Back</button>
+    <form className="ob in" noValidate onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      <button type="button" className="chip" onClick={() => setAuthMode("start")}><BackIcon /> Back</button>
       <h1>Log in</h1>
       <label>Email<input type="email" autoComplete="email" value={email} onChange={(e) => { setEmail(e.target.value); setErr(""); setFailedEmail(null); }} /></label>
       <label>Password<PasswordInput autoComplete="current-password" value={pw} onChange={(e) => { setPw(e.target.value); setErr(""); setFailedEmail(null); }} /></label>
-      <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
+      <p role="alert" style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
       {failedEmail && (
         <p className="mu" style={{ textAlign: "center" }}>
           Not activated yet?{" "}
-          <button className="tel" disabled={rqBusy} onClick={quickResend}>{rqBusy ? "Sending…" : "Resend activation link"}</button>
+          <button type="button" className="tel" disabled={rqBusy} onClick={quickResend}>{rqBusy ? "Sending…" : "Resend activation link"}</button>
           {rqMsg ? <> · {rqMsg}</> : null}
         </p>
       )}
-      <button className="btn" disabled={busy} onClick={submit}>{busy ? "Logging in…" : "Log in"}</button>
-      <p className="mu" style={{ textAlign: "center", marginTop: 14 }}><button className="tel" onClick={requestReset}>Forgot password?</button></p>
-      <p className="mu" style={{ textAlign: "center" }}>New here? <button className="tel" onClick={() => setAuthMode("signup")}>Sign up</button></p>
-    </div>
+      <button type="submit" className="btn" disabled={busy}>{busy ? "Logging in…" : "Log in"}</button>
+      <p className="mu" style={{ textAlign: "center", marginTop: 14 }}><button type="button" className="tel" onClick={requestReset}>Forgot password?</button></p>
+      <p className="mu" style={{ textAlign: "center" }}>New here? <button type="button" className="tel" onClick={() => setAuthMode("signup")}>Sign up</button></p>
+    </form>
   );
 }
 
@@ -295,7 +297,7 @@ export function RecoverySetup({ store, update, onFinish, onBack }) {
     if (!date) { setErr("Please enter your recovery start date."); return; }
     const dd = new Date(date + "T00:00:00").getTime();
     if (isNaN(dd)) { setErr("That date isn't valid. Please pick it again."); return; }
-    if (dd - Date.now() > 864e5) { setErr("Please choose today or an earlier date. Your device date is " + lt() + "."); return; }
+    if (date > lt()) { setErr("Please choose today or an earlier date. Your device date is " + lt() + "."); return; }
     const amount = parseAmountInput(spend);
     if (spend === "" || isNaN(amount) || amount < 0) { setErr("Please enter how much you spent per week (0 if none)."); return; }
     update({ start: Math.min(Date.now(), dd), cc, spend: amount, ...(hasAccount ? { bio: bio.trim().slice(0, 160) } : null) });
@@ -303,16 +305,16 @@ export function RecoverySetup({ store, update, onFinish, onBack }) {
   };
 
   return (
-    <div className="ob in">
-      {onBack && <button className="chip" onClick={onBack} style={{ marginBottom: 4 }}><BackIcon /> Back</button>}
+    <form className="ob in" noValidate onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      {onBack && <button type="button" className="chip" onClick={onBack} style={{ marginBottom: 4 }}><BackIcon /> Back</button>}
       <h1>Your recovery</h1>
       <DateField label="When did your recovery start?" value={date} onChange={setDate} />
       <label>Roughly how much did you spend gambling per week? (used for &quot;money saved&quot;)</label>
-      <div className="row" style={{ gap: 8 }}>
-        <select style={{ width: "44%" }} value={cc} onChange={(e) => setCc(e.target.value)}>
+      <div className="amount-fields">
+        <select aria-label="Currency" value={cc} onChange={(e) => setCc(e.target.value)}>
           {CUR.map((c) => <option key={c[0]} value={c[0]}>{c[1] !== c[0] ? `${c[0]} (${c[1]})` : c[0]}</option>)}
         </select>
-        <input type="text" inputMode="decimal" placeholder="Amount per week" style={{ flex: 1 }} value={spend} onChange={(e) => setSpend(formatAmountInput(e.target.value))} />
+        <input aria-label="Amount per week" type="text" inputMode="decimal" placeholder="Amount per week" value={spend} onChange={(e) => setSpend(formatAmountInput(e.target.value))} />
       </div>
       {hasAccount && (
         <>
@@ -322,8 +324,8 @@ export function RecoverySetup({ store, update, onFinish, onBack }) {
           <p className="mu" style={{ marginTop: -8 }}>{bio.length}/160</p>
         </>
       )}
-      <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
-      <button className="btn" onClick={submit}>Start my recovery</button>
-    </div>
+      <p role="alert" style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
+      <button type="submit" className="btn">Start my recovery</button>
+    </form>
   );
 }

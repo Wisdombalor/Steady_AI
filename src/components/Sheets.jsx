@@ -689,12 +689,13 @@ export function AiSheet({ store, update }) {
 
   return (
     <div className="ai-wrap">
+      <h2 className="sr-only">Talk to Beacon</h2>
       <div className="row" style={{ alignItems: "center" }}>
         <button className="chip" onClick={() => setView("list")} aria-label="Back to all chats"><BackIcon /> All chats</button>
         <span className="mu">{active ? `Day ${active.days}` : "New chat"}</span>
         <button className="chip on" onClick={newChat}>+ New</button>
       </div>
-      <div ref={boxRef} id="chat" className="ai-chat">
+      <div ref={boxRef} id="chat" className="ai-chat" role="log" aria-label="Conversation with Beacon" aria-live="polite">
         {!msgs.length && <div className="msg a">{AI_GREETING(store.name)}</div>}
         {msgs.map((m, i) => <div key={i} className={"msg " + m.r}>{m.t}</div>)}
         {busy && <div className="msg a"><span className="tdots" aria-label="Beacon is typing"><i /><i /><i /></span></div>}
@@ -712,8 +713,8 @@ export function AiSheet({ store, update }) {
         </div>
       )}
       <div className="ai-input">
-        <input placeholder={resting ? "Beacon is resting…" : "Message Beacon"} disabled={resting} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") send(); }} />
-        <button className="btn" onClick={() => send()} disabled={busy || resting}>{busy ? "Thinking…" : "Send"}</button>
+        <input aria-label="Message Beacon" placeholder={resting ? "Beacon is resting…" : "Message Beacon"} disabled={resting} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) send(); }} />
+        <button className="btn" onClick={() => send()} disabled={busy || resting || !input.trim()}>{busy ? "Thinking…" : "Send"}</button>
       </div>
     </div>
   );

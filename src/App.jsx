@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { CO, MOT } from "./lib/data";
 import { useSteadyStore, freshStore, migrate } from "./lib/store";
 import { supabase, loadPosts, sendReport, insertPost, getModState, syncProfile } from "./lib/backend";
-import { AdminApp } from "./components/Admin";
 import { aerr, daysSince } from "./lib/helpers";
 import { Nav, Sheet, Modal } from "./components/Chrome";
 import { Onboarding, Login, Signup, RecoverySetup } from "./components/Onboarding";
@@ -18,6 +17,8 @@ import {
   CheckSheet, SelfCheckSheet, SelfResult, ReassessSheet, ReassessResult, AiSheet, SetPwSheet,
   ProfileSheet, ConfirmSheet,
 } from "./components/Sheets";
+
+const AdminApp = lazy(() => import("./components/Admin").then((m) => ({ default: m.AdminApp })));
 
 function stageFor(days) {
   return days < 1 ? "Starting out" : days <= 7 ? "1–7 days" : days <= 30 ? "8–30 days"
@@ -548,13 +549,13 @@ export default function App() {
       <div id="app">
         {veil}
         <main id="main">
-          <AdminApp
+          <Suspense fallback={<p className="mu" role="status">Loading admin tools…</p>}><AdminApp
             user={user} mod={mod} path={adminPath} store={store} update={update}
             onAuth={onAuth} authMode={authMode} setAuthMode={setAuthMode}
             onExit={() => { window.location.hash = "#/"; }}
             onSignOut={actions.logout}
             refreshMod={refreshMod}
-          />
+          /></Suspense>
         </main>
         <nav id="nav" />
       </div>
@@ -584,9 +585,9 @@ export default function App() {
         <nav id="nav" />
         <Sheet open={sheet?.name === "confirmLogout"} onClose={close}>
           <ConfirmSheet
-            title="Log out?"
-            body="You can log back in anytime with the same account."
-            confirmLabel="Log out"
+            title="Sign out?"
+            body="You can sign back in anytime with the same account."
+            confirmLabel="Sign out"
             onConfirm={() => { close(); actions.logout(); }}
             onCancel={close}
           />
@@ -673,9 +674,9 @@ export default function App() {
         {sheet?.name === "wipe" && <WipeSheet onConfirm={wipeAll} onCancel={close} />}
         {sheet?.name === "confirmLogout" && (
           <ConfirmSheet
-            title="Log out?"
-            body="You can log back in anytime with the same account."
-            confirmLabel="Log out"
+            title="Sign out?"
+            body="You can sign back in anytime with the same account."
+            confirmLabel="Sign out"
             onConfirm={() => { close(); actions.logout(); }}
             onCancel={close}
           />

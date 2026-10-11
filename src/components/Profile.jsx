@@ -65,7 +65,7 @@ export function Profile({ store, update, actions, authed, userId }) {
     if (!date) { setErr("Please pick your recovery start date."); return; }
     const dd = new Date(date + "T00:00:00").getTime();
     if (isNaN(dd)) { setErr("That date isn't valid. Please pick it again."); return; }
-    if (dd - Date.now() > 864e5) { setErr("Please choose today or an earlier date. Your device date is " + lt() + "."); return; }
+    if (date > lt()) { setErr("Please choose today or an earlier date. Your device date is " + lt() + "."); return; }
     const amount = parseAmountInput(spend);
     if (spend === "" || isNaN(amount) || amount < 0) { setErr("Please enter a valid amount per week (0 if none)."); return; }
     setBusy(true);
@@ -98,8 +98,8 @@ export function Profile({ store, update, actions, authed, userId }) {
       <h1>Profile</h1>
       {!authed && (
         <div className="card">
-          <b>You&apos;re not logged in</b>
-          <p className="mu">Log in or create an account to sync your recovery across devices.</p>
+          <b>Save your progress</b>
+          <p className="mu">An account syncs your recovery across devices, so you never lose your streak.</p>
           <button className="btn" onClick={() => actions.open("login")} style={{ marginBottom: 8 }}>Log in</button>
           <button className="btn sec" onClick={() => actions.open("signup")}>Sign up</button>
         </div>
@@ -126,9 +126,6 @@ export function Profile({ store, update, actions, authed, userId }) {
           </div>
           <div style={{ marginTop: 14 }}>
             <button className="btn sec" onClick={startEdit}>Edit profile</button>
-            {store.email && (
-              <button className="btn sec" onClick={() => actions.open("confirmLogout")} style={{ marginTop: 8 }}>Log out</button>
-            )}
           </div>
         </div>
       ) : (
@@ -161,21 +158,27 @@ export function Profile({ store, update, actions, authed, userId }) {
             </label>
             <DateField label="Recovery start" value={date} onChange={setDate} />
             <label>Weekly spend</label>
-            <div className="row" style={{ gap: 8 }}>
-              <select style={{ width: "44%" }} value={cc} onChange={(e) => setCc(e.target.value)}>
+            <div className="amount-fields">
+              <select aria-label="Currency" value={cc} onChange={(e) => setCc(e.target.value)}>
                 {CUR.map((c) => <option key={c[0]} value={c[0]}>{c[1] !== c[0] ? `${c[0]} (${c[1]})` : c[0]}</option>)}
               </select>
-              <input type="text" inputMode="decimal" placeholder="Amount per week" value={spend} onChange={(e) => setSpend(formatAmountInput(e.target.value))} style={{ flex: 1 }} />
+              <input type="text" inputMode="decimal" placeholder="Amount per week" aria-label="Amount per week" value={spend} onChange={(e) => setSpend(formatAmountInput(e.target.value))} style={{ flex: 1 }} />
             </div>
-            {err ? <p style={{ color: "var(--bad)", fontSize: 14, margin: "0 0 8px" }}>{err}</p> : null}
+            {err ? <p role="alert" style={{ color: "var(--bad)", fontSize: 14, margin: "0 0 8px" }}>{err}</p> : null}
             <button className="btn" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save changes"}</button>
             <button className="btn sec" onClick={() => { setEditing(false); setErr(""); }} style={{ marginTop: 8 }}>Cancel</button>
           </div>
         </div>
       )}
 
+      {authed && !editing && (
+        <p style={{ textAlign: "center", margin: "4px 0 12px" }}>
+          <button className="tel" style={{ color: "var(--mu)" }} onClick={() => actions.open("confirmLogout")}>Sign out</button>
+        </p>
+      )}
+
       <div className="card">
-        <p className="mu">Steady is a recovery-support companion, not a therapist or emergency service. Data stays on this device unless you send a report or request.</p>
+        <p className="mu">Steady is a recovery-support companion, not a therapist or emergency service. Without an account, recovery data stays on this device. When signed in, your recovery data syncs to your account. Community posts and reports are shared when you submit them.</p>
         <button className="btn sec" onClick={() => actions.open("wipe")}>Delete all my data</button>
       </div>
     </div>

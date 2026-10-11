@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { lt } from "../lib/helpers";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -17,9 +17,13 @@ export function DateField({ value, onChange, label, max, minYear = 1920 }) {
   const todayStr = lt();
   const maxYear = Number(String(max ?? todayStr).slice(0, 4)) || new Date().getFullYear();
   const [part, setPart] = useState(() => parseValue(value));
+  const lastEmitted = useRef(value);
 
   useEffect(() => {
-    setPart(parseValue(value));
+    if (value !== lastEmitted.current) {
+      lastEmitted.current = value;
+      setPart(parseValue(value));
+    }
   }, [value]);
 
   const years = [];
@@ -28,12 +32,16 @@ export function DateField({ value, onChange, label, max, minYear = 1920 }) {
   const commit = (ny, nm, nd) => {
     setPart({ y: ny, m: nm, d: nd });
     if (!ny || !nm || !nd) {
-      if (!ny && !nm && !nd) onChange("");
+      lastEmitted.current = "";
+      onChange("");
       return;
     }
     const dim = daysInMonth(+ny, +nm);
     const dd = Math.min(+nd, dim);
-    onChange(`${ny}-${String(nm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`);
+    const next = `${ny}-${String(nm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+    setPart({ y: ny, m: nm, d: String(dd) });
+    lastEmitted.current = next;
+    onChange(next);
   };
 
   const maxDay = part.y && part.m ? daysInMonth(+part.y, +part.m) : 31;
@@ -41,7 +49,7 @@ export function DateField({ value, onChange, label, max, minYear = 1920 }) {
   for (let i = 1; i <= maxDay; i++) days.push(String(i));
 
   return (
-    <label>{label}
+    <fieldset className="date-fieldset"><legend>{label}</legend>
       <span className="date-grid">
         <select aria-label="Day" value={part.d} onChange={(e) => commit(part.y, part.m, e.target.value)}>
           <option value="">Day</option>
@@ -56,6 +64,6 @@ export function DateField({ value, onChange, label, max, minYear = 1920 }) {
           {years.map((yr) => <option key={yr} value={yr}>{yr}</option>)}
         </select>
       </span>
-    </label>
+    </fieldset>
   );
 }

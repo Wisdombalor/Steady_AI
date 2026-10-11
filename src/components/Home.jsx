@@ -46,22 +46,26 @@ export function Home({ store, actions }) {
   return (
     <div className="in">
       <h1>Good {g}, {store.name}</h1>
+      <p className="mu home-intro">One day at a time. Choose what helps you today.</p>
+      <div className="home-overview">
       {store.start ? (
         <>
-          <div id="ctr"><Counter store={store} /><p className="saved">Saved so far <b>{fm(store, moneySaved(store))}</b></p></div>
+          <section id="ctr" className="progress-summary" aria-label="Your recovery progress"><p className="mu">Your recovery so far</p><Counter store={store} /><p className="saved">Estimated savings <b>{fm(store, moneySaved(store))}</b></p></section>
         </>
       ) : (
         <StartDateNudge actions={actions} />
       )}
       <CheckCard store={store} onCheck={actions.open} />
-      <button className="urge" onClick={() => actions.open("urge")}>I&apos;m having an urge</button>
-      <div className="grid">
-        <button className="card" onClick={() => actions.open("ai")}>Talk to Beacon</button>
-        <button className="card" onClick={() => actions.open("acts")}>Do an activity</button>
-        <button className="card" onClick={() => actions.open("call")}>Call trusted person</button>
-        <button className="card" onClick={() => actions.open("protect")}>Protect me</button>
       </div>
-      <div className="grid" style={{ marginTop: 12 }}>
+      <button className="urge" onClick={() => actions.open("urge")}>I&apos;m having an urge</button>
+      <h2 className="home-section-title">A little support</h2>
+      <div className="grid quick-actions">
+        <button className="card" onClick={() => actions.open("ai")}><b>Talk to Beacon</b><span className="mu">Space to talk things through</span></button>
+        <button className="card" onClick={() => actions.open("acts")}><b>Do an activity</b><span className="mu">Give your attention a new place</span></button>
+        <button className="card" onClick={() => actions.open("call")}><b>Call a trusted person</b><span className="mu">Reach someone in your corner</span></button>
+        <button className="card" onClick={() => actions.open("protect")}><b>Protect me</b><span className="mu">Make gambling harder to access</span></button>
+      </div>
+      <div className="grid home-stats" style={{ marginTop: 12 }}>
         <div className="card stat"><b>{store.urges.length}</b><span className="mu">Urges logged</span></div>
         <div className="card stat"><b>{ok}</b><span className="mu">Urge went down</span></div>
         {store.start ? (
