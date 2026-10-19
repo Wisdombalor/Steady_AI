@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { CO, MOT } from "./lib/data";
 import { useSteadyStore, freshStore, migrate } from "./lib/store";
 import { supabase, loadPosts, sendReport, insertPost, getModState, syncProfile } from "./lib/backend";
+import { resolveAccountStore } from "./lib/account";
 import { aerr, daysSince } from "./lib/helpers";
 import { Nav, Sheet, Modal } from "./components/Chrome";
 import { Onboarding, Login, Signup, RecoverySetup } from "./components/Onboarding";
@@ -28,6 +29,8 @@ function stageFor(days) {
 export default function App() {
   const [user, setUser] = useState(null);
   const pushTimer = useRef(null);
+  const accountLoad = useRef(null);
+  const syncedUserId = useRef(null);
   const queuePush = useCallback(() => {
     clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(async () => {
@@ -46,7 +49,7 @@ export default function App() {
 
   const doPush = useCallback(async () => {
     const u = userRef.current, s = storeRef.current;
-    if (!u) return;
+    if (!u || syncedUserId.current !== u.id || s.userId !== u.id) return;
     try {
       const a = supabase();
       const { posts, outbox, ...rest } = s;
@@ -156,21 +159,39 @@ export default function App() {
   // returning account holder never sees onboarding flash before restore.
   useEffect(() => {
     let sub = null;
+    let activeSessionId = null;
+    let disposed = false;
     const readyTimer = setTimeout(() => setAuthReady(true), 6000);
     (async () => {
       try {
         const a = supabase();
-        const { data } = a.auth.onAuthStateChange(async (ev, session) => {
-          setAuthReady(true);
-          if (ev === "PASSWORD_RECOVERY") { open("setpw"); return; }
-          if (ev === "SIGNED_OUT") { setUser(null); return; }
+        const { data } = a.auth.onAuthStateChange((ev, session) => {
+          activeSessionId = session?.user?.id || null;
+          if (ev === "PASSWORD_RECOVERY") { open("setpw"); }
+          if (ev === "SIGNED_OUT") {
+            syncedUserId.current = null;
+            accountLoad.current = null;
+            clearTimeout(pushTimer.current);
+            userRef.current = null;
+            storeRef.current = freshStore();
+            setUser(null);
+            resetStore();
+            setOb(0);
+            setAuthReady(true);
+            return;
+          }
           if (session?.user) {
-            // Fresh sign-ins navigate home; silent token refreshes must not
-            // yank the user out of what they're doing.
-            const returning = ev === "INITIAL_SESSION" || (ev === "SIGNED_IN" && isReturningUser(session.user));
-            await handleUser(session.user, ev !== "TOKEN_REFRESHED", returning);
-          } else if (ev === "INITIAL_SESSION") {
-            refreshPosts();
+            // Supabase holds its auth lock during this callback. Run database
+            // requests after it returns so session restoration cannot deadlock.
+            setTimeout(() => {
+              if (disposed || activeSessionId !== session.user.id) return;
+              handleUser(session.user, ev !== "TOKEN_REFRESHED" && ev !== "PASSWORD_RECOVERY")
+                .catch(() => setOauthNote({ kind: "error", text: "Couldn't load your progress. Please try signing in again." }))
+                .finally(() => setAuthReady(true));
+            }, 0);
+          } else {
+            setAuthReady(true);
+            if (ev === "INITIAL_SESSION") refreshPosts();
           }
         });
         sub = data?.subscription;
@@ -202,7 +223,7 @@ export default function App() {
               try {
                 const { data: s } = await a.auth.getSession();
                 if (s?.session?.user) {
-                  await handleUser(s.session.user, true, isReturningUser(s.session.user));
+                  await handleUser(s.session.user);
                   setOauthNote(null);
                   done = true;
                 }
@@ -218,66 +239,47 @@ export default function App() {
         }
       } catch {}
     })();
-    return () => { clearTimeout(readyTimer); try { sub?.unsubscribe(); } catch {} };
+    return () => { disposed = true; clearTimeout(readyTimer); try { sub?.unsubscribe(); } catch {} };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // returning = this account existed before this sign-in (login form,
-  // restored session, older OAuth account). Returners without synced progress
-  // skip to recovery setup (ob 2) instead of redoing full onboarding.
-  const handleUser = async (u, fresh = true, returning = false) => {
-    setUser(u);
-    try {
-      const a = supabase();
-      const r = await a.from("user_data").select("data").maybeSingle();
-      const d = r.data?.data;
-      if (d && d.done) {
-        const keep = { posts: storeRef.current.posts, outbox: storeRef.current.outbox };
-        const next = migrate({ ...freshStore(), ...d, ...keep, checks: d.checks || [] });
-        replaceAll(next);
-        if (!next.done && !returning) setOb(1);
-      } else if (storeRef.current.done) doPush();
-    } catch {}
-    try {
-      const remote = await loadPosts(u);
-      const local = storeRef.current.posts.filter((x) => String(x.id).startsWith("p"));
-      update({ posts: [...remote, ...local] });
-    } catch {}
-    const meta = u.user_metadata || {};
-    const email = u.email || "";
-    // Google accounts don't always expose a name; fall back to the email
-    // prefix so OAuth users are never stranded on the landing page.
-    const displayName = meta.name || meta.full_name || storeRef.current.name || email.split("@")[0] || "";
-    const n = displayName.trim();
-    update({ email });
-    if (n.length < 2) { setAuthMode("start"); return; }
-    update({ name: n });
-    try {
-      const s = storeRef.current;
-      await syncProfile(u, { displayName: n, avatarUrl: s.avatar, bio: s.bio });
-    } catch {}
-    // Independent lookup: a profile-sync hiccup must never block the role check.
-    try {
-      setMod(await getModState(u.id));
-    } catch {}
-    if (!fresh) return;
-    if (storeRef.current.done) { close(); setTab("home"); }
-    else if (returning) {
-      // Existing account, no setup data anywhere: use what's on record
-      // (name/email) and go home. Missing pieces (start date) are offered
-      // in-app via nudge instead of forced onboarding.
-      update({ done: 1 });
-      close(); setTab("home");
+  // Every auth entry point uses persisted completion, never account age or
+  // the login form used. Coalesce the listener and form/redirect callbacks.
+  const handleUser = (u, fresh = true) => {
+    if (accountLoad.current?.id === u.id) return accountLoad.current.promise;
+    if (syncedUserId.current === u.id) {
+      setUser(u);
+      return Promise.resolve();
     }
-    else setOb(1);
-  };
-
-  // Accounts older than this at sign-in count as returning (not fresh signups).
-  const isReturningUser = (u) => {
-    try {
-      const c = new Date(u?.created_at || 0).getTime();
-      return !!c && (Date.now() - c > 120000);
-    } catch { return false; }
+    syncedUserId.current = null;
+    clearTimeout(pushTimer.current);
+    const load = { id: u.id, promise: null };
+    accountLoad.current = load;
+    load.promise = (async () => {
+      const a = supabase();
+      const { data, error } = await a.from("user_data").select("data").eq("user_id", u.id).maybeSingle();
+      // A failed lookup is not proof that this is a new account. Do not
+      // overwrite existing cloud progress with a fresh browser's empty state.
+      if (error) throw error;
+      if (accountLoad.current !== load) return;
+      const next = migrate(resolveAccountStore(u, data?.data, storeRef.current, freshStore));
+      storeRef.current = next;
+      replaceAll(next);
+      syncedUserId.current = u.id;
+      userRef.current = u;
+      setUser(u);
+      if (!next.done) { setAuthMode("start"); setOb(1); }
+      if (fresh) {
+        close();
+        if (next.done) setTab("home");
+      }
+      // Profile and community requests must not hold up onboarding.
+      refreshPosts();
+      syncProfile(u, { displayName: next.name, avatarUrl: next.avatar, bio: next.bio }).catch(() => {});
+    })().finally(() => {
+      if (accountLoad.current === load) accountLoad.current = null;
+    });
+    return load.promise;
   };
 
   const onAuth = async (cmd) => {
@@ -306,7 +308,7 @@ export default function App() {
         try {
           const r = await a.auth.signInWithPassword({ email: cmd.login.email, password: cmd.login.password });
           if (r.error) throw r.error;
-          await handleUser(r.data.user, true, true);
+          await handleUser(r.data.user);
         } catch (e) {
           if (/not confirmed|email not confirmed/i.test(e?.message || "")) return "UNCONFIRMED:" + cmd.login.email;
           throw e;
