@@ -1,6 +1,16 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 const KEY = "steady";
+const accountKey = (id) => `${KEY}-account:${id}`;
+
+export function loadAccountStore(id) {
+  try { const raw = localStorage.getItem(accountKey(id)); return raw ? migrate({ ...freshStore(), ...JSON.parse(raw) }) : null; }
+  catch { return null; }
+}
+
+export function forgetAccountStore(id) {
+  try { localStorage.removeItem(accountKey(id)); } catch {}
+}
 
 export const freshStore = () => ({
   name: "",
@@ -41,6 +51,7 @@ export function loadStore() {
 // One-time migration: spend used to be entered per day, now it is per week.
 // Scale old values so "money saved" stays continuous.
 export function migrate(s) {
+  s = { ...s, outbox: (s.outbox || []).map((item, index) => item.id ? item : { ...item, id: `legacy-${index}-${Date.now()}` }) };
   if (s && !s.spendMigrated) {
     const spend = (s.spend || 0) > 0 ? Math.round(s.spend * 7 * 100) / 100 : (s.spend || 0);
     return { ...s, spend, spendMigrated: 1 };
@@ -48,37 +59,43 @@ export function migrate(s) {
   return s;
 }
 
-export function useSteadyStore(user, queuePush) {
+export function useSteadyStore() {
   const [store, setStore] = useState(loadStore);
+  const current = useRef(store);
+
+  const persist = useCallback((next) => {
+    // Keep in-memory updates synchronous: a save or sign-out immediately
+    // after an edit must see that edit, not the previous React render.
+    current.current = next;
+    try {
+      localStorage.setItem(KEY, JSON.stringify(next));
+      if (next.userId) localStorage.setItem(accountKey(next.userId), JSON.stringify(next));
+    }
+    catch { next = { ...next, _storageError: true }; current.current = next; }
+    setStore(next);
+    return next;
+  }, []);
 
   const update = useCallback(
     (fn) => {
-      setStore((prev) => {
-        const next = typeof fn === "function" ? fn(prev) : fn;
-        const merged = { ...prev, ...next };
-        try {
-          localStorage.setItem(KEY, JSON.stringify(merged));
-        } catch {}
-        if (user && queuePush) queuePush();
-        return merged;
-      });
+      const prev = current.current;
+      const patch = typeof fn === "function" ? fn(prev) : fn;
+      const dirty = Object.keys(patch).some((k) => !["posts", "outbox"].includes(k) && !k.startsWith("_"));
+      return persist({ ...prev, ...patch, ...(dirty ? { _pendingSync: true } : {}) });
     },
-    [user, queuePush]
+    [persist]
   );
 
   const reset = useCallback(() => {
     try {
       localStorage.removeItem(KEY);
     } catch {}
-    setStore(freshStore());
+    current.current = freshStore();
+    setStore(current.current);
   }, []);
 
-  const replaceAll = useCallback((next) => {
-    setStore(next);
-    try {
-      localStorage.setItem(KEY, JSON.stringify(next));
-    } catch {}
-  }, []);
+  const replaceAll = persist;
 
   return [store, update, reset, replaceAll, setStore];
 }
+

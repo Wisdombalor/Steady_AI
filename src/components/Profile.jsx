@@ -60,8 +60,8 @@ export function Profile({ store, update, actions, authed, userId }) {
   const save = async () => {
     setErr("");
     const clean = normalizeName(name);
-    if (clean.length < 2) { setErr("Please enter your name."); return; }
-    if (!isValidName(clean)) { setErr("Please use letters only for your name — no numbers or symbols."); return; }
+    if (clean.length < 1) { setErr("Please enter your name."); return; }
+    if (!isValidName(clean)) { setErr("Use a name up to 80 characters. Letters, spaces, apostrophes and hyphens are welcome."); return; }
     if (!date) { setErr("Please pick your recovery start date."); return; }
     const dd = new Date(date + "T00:00:00").getTime();
     if (isNaN(dd)) { setErr("That date isn't valid. Please pick it again."); return; }
@@ -82,7 +82,7 @@ export function Profile({ store, update, actions, authed, userId }) {
     update({ name: clean, bio: bio.trim().slice(0, BIO_MAX), country, start: Math.min(Date.now(), dd), cc, spend: amount, avatar });
     setBusy(false);
     setEditing(false);
-    setFlash("Saved ✓ Your profile is up to date.");
+    setFlash("Saved on this device. Account changes sync automatically.");
   };
 
   const prettyDate = store.start
@@ -178,9 +178,10 @@ export function Profile({ store, update, actions, authed, userId }) {
       )}
 
       <div className="card">
-        <p className="mu">Steady is a recovery-support companion, not a therapist or emergency service. Without an account, recovery data stays on this device. When signed in, your recovery data syncs to your account. Community posts and reports are shared when you submit them.</p>
+        <p className="mu">Steady is a recovery-support companion, not a therapist or emergency service. Without an account, recovery data stays on this device. When signed in, your recovery data syncs to your account. Public posts show your name. Private posts are visible only to you and are stored in your account when signed in. AI messages are sent to Google Gemini only when you use Beacon; support requests go through FormSubmit to Steady Support.</p>
         <button className="btn sec" onClick={() => actions.open("wipe")}>Delete all my data</button>
       </div>
     </div>
   );
 }
+

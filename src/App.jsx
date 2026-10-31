@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { CO, MOT } from "./lib/data";
-import { useSteadyStore, freshStore, migrate } from "./lib/store";
-import { supabase, loadPosts, sendReport, insertPost, getModState, syncProfile } from "./lib/backend";
+import { useSteadyStore, freshStore, migrate, loadAccountStore, forgetAccountStore } from "./lib/store";
+import { supabase, loadPosts, sendReport, insertPost, getModState, syncProfile, deleteAccount } from "./lib/backend";
+import { cloudData, saveRecoveryData, isSyncConflict } from "./lib/sync";
 import { resolveAccountStore } from "./lib/account";
 import { aerr, daysSince } from "./lib/helpers";
 import { Nav, Sheet, Modal } from "./components/Chrome";
@@ -31,36 +32,58 @@ export default function App() {
   const pushTimer = useRef(null);
   const accountLoad = useRef(null);
   const syncedUserId = useRef(null);
-  const queuePush = useCallback(() => {
-    clearTimeout(pushTimer.current);
-    pushTimer.current = setTimeout(async () => {
-      try {
-        if (!supabase) return;
-        // user read from ref below
-      } catch {}
-    }, 1500);
-  }, []);
-
-  const [store, update, resetStore, replaceAll] = useSteadyStore(user, queuePush);
+  const saveTask = useRef(null);
+  const conflictRef = useRef(false);
+  const [syncIssue, setSyncIssue] = useState(null);
+  const [store, updateStore, resetStore, replaceAll] = useSteadyStore();
   const storeRef = useRef(store);
   storeRef.current = store;
+  const update = useCallback((patch) => {
+    const next = updateStore(patch);
+    storeRef.current = next;
+    return next;
+  }, [updateStore]);
   const userRef = useRef(user);
   userRef.current = user;
 
   const doPush = useCallback(async () => {
-    const u = userRef.current, s = storeRef.current;
-    if (!u || syncedUserId.current !== u.id || s.userId !== u.id) return;
-    try {
-      const a = supabase();
-      const { posts, outbox, ...rest } = s;
-      await a.from("user_data").upsert({ user_id: u.id, data: rest, updated_at: new Date().toISOString() });
-    } catch {}
-  }, []);
+    if (conflictRef.current) return false;
+    if (saveTask.current) return saveTask.current;
+    const u = userRef.current, snapshot = storeRef.current;
+    if (!u || syncedUserId.current !== u.id || snapshot.userId !== u.id || !snapshot._pendingSync) return true;
+    const task = (async () => {
+      try {
+        const a = supabase();
+        const revision = await saveRecoveryData(a, u.id, snapshot);
+        if (syncedUserId.current !== u.id || userRef.current?.id !== u.id) return false;
+        update({ _revision: revision });
+        // Save public profile fields as part of the same retryable sync task.
+        await syncProfile(u, { displayName: snapshot.name, avatarUrl: snapshot.avatar, bio: snapshot.bio });
+        if (syncedUserId.current !== u.id) return false;
+        update((latest) => ({ _revision: revision, _pendingSync: JSON.stringify(cloudData(latest)) !== JSON.stringify(cloudData(snapshot)) }));
+        setSyncIssue(null);
+        return true;
+      } catch (error) {
+        if (userRef.current?.id === u.id) { conflictRef.current = isSyncConflict(error); setSyncIssue(conflictRef.current ? "conflict" : "failed"); }
+        return false;
+      }
+    })();
+    saveTask.current = task;
+    try { return await task; } finally { if (saveTask.current === task) saveTask.current = null; }
+  }, [update]);
 
   useEffect(() => {
     clearTimeout(pushTimer.current);
-    if (user) pushTimer.current = setTimeout(doPush, 1500);
-  }, [store, user, doPush]);
+    if (user && store._pendingSync && syncIssue !== "conflict") pushTimer.current = setTimeout(doPush, 1200);
+    return () => clearTimeout(pushTimer.current);
+  }, [store, user, doPush, syncIssue]);
+
+  useEffect(() => {
+    const retry = () => { if (navigator.onLine) doPush(); };
+    window.addEventListener("online", retry);
+    const timer = setInterval(retry, 30000);
+    return () => { window.removeEventListener("online", retry); clearInterval(timer); };
+  }, [doPush]);
 
   const [tab, setTab] = useState("home");
   const [ob, setOb] = useState(0);
@@ -99,10 +122,16 @@ export default function App() {
   // app keeps working pre-migration; the admin gate requires role === admin.
   useEffect(() => {
     if (!user) { setMod({ role: "user", status: "active" }); return; }
-    getModState(user.id).then(setMod).catch(() => setMod({ role: "user", status: "active" }));
+    let active = true;
+    getModState(user.id).then((value) => { if (active) setMod(value); }).catch(() => { if (active) setMod({ role: "user", status: "active" }); });
+    return () => { active = false; };
   }, [user]);
 
   const suspended = !!user && mod.status !== "active";
+  const feedPage = useRef(0);
+  const feedRequest = useRef(0);
+  const [morePosts, setMorePosts] = useState(true);
+  const [feedError, setFeedError] = useState("");
 
   const refreshMod = useCallback(async () => {
     try {
@@ -125,33 +154,46 @@ export default function App() {
   }, []);
   const goTab = useCallback((v) => { setSheet(null); setTab(v); }, []);
 
-  const refreshPosts = useCallback(async () => {
+  const refreshPosts = useCallback(async (more = false) => {
+    const request = ++feedRequest.current;
+    const owner = userRef.current?.id || null;
+    const page = more ? feedPage.current + 1 : 0;
     try {
-      const remote = await loadPosts(userRef.current);
-      const local = storeRef.current.posts.filter((x) => String(x.id).startsWith("p"));
-      const merged = [...remote, ...local];
-      update({ posts: merged });
-    } catch {}
+      const remote = await loadPosts(userRef.current, page);
+      if (request !== feedRequest.current || owner !== (userRef.current?.id || null)) return;
+      feedPage.current = page;
+      setMorePosts(remote.length >= 100);
+      setFeedError("");
+      const previous = more ? storeRef.current.posts : storeRef.current.posts.filter((x) => String(x.id).startsWith("p"));
+      update({ posts: [...new Map([...previous, ...remote].map((post) => [post.id, post])).values()] });
+    } catch {
+      if (request === feedRequest.current && owner === (userRef.current?.id || null)) setFeedError("Couldn't load posts. Please try again.");
+    }
   }, [update]);
 
   useEffect(() => { if (tab === "com") refreshPosts(); }, [tab, refreshPosts]);
 
-  // flush outbox
   useEffect(() => {
-    if (!store.outbox.length || !store.done) return;
-    const q = [...store.outbox];
-    update({ outbox: [] });
-    (async () => {
-      for (const o of q) {
-        try {
-          await sendReport(o.subject, o.f, (queued) =>
-            update((prev) => ({ outbox: [...prev.outbox, queued] }))
-          );
-        } catch {}
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.done]);
+    let active = true;
+    let flushing = false;
+    const controller = new AbortController();
+    const flush = async () => {
+      if (flushing || !navigator.onLine || !storeRef.current.done) return;
+      const owner = userRef.current?.id || null;
+      flushing = true;
+      try {
+        for (const item of [...storeRef.current.outbox]) {
+          if (!active || owner !== (userRef.current?.id || null)) break;
+          const sent = await sendReport(item.subject, item.f, undefined, controller.signal);
+          if (sent && active && owner === (userRef.current?.id || null)) update((prev) => ({ outbox: prev.outbox.filter((x) => x.id !== item.id) }));
+        }
+      } catch { /* Keep undelivered messages queued. */ } finally { flushing = false; }
+    };
+    flush();
+    window.addEventListener("online", flush);
+    const timer = setInterval(flush, 30000);
+    return () => { active = false; controller.abort(); window.removeEventListener("online", flush); clearInterval(timer); };
+  }, [store.done, store.outbox, update]);
 
   // Track the session for the life of the app so refreshes, restores and
   // token refreshes keep the user signed in (persisted by supabase-js).
@@ -169,6 +211,7 @@ export default function App() {
           activeSessionId = session?.user?.id || null;
           if (ev === "PASSWORD_RECOVERY") { open("setpw"); }
           if (ev === "SIGNED_OUT") {
+            feedRequest.current++;
             syncedUserId.current = null;
             accountLoad.current = null;
             clearTimeout(pushTimer.current);
@@ -257,12 +300,16 @@ export default function App() {
     accountLoad.current = load;
     load.promise = (async () => {
       const a = supabase();
-      const { data, error } = await a.from("user_data").select("data").eq("user_id", u.id).maybeSingle();
+      const { data, error } = await a.from("user_data").select("data,revision").eq("user_id", u.id).maybeSingle();
       // A failed lookup is not proof that this is a new account. Do not
       // overwrite existing cloud progress with a fresh browser's empty state.
       if (error) throw error;
       if (accountLoad.current !== load) return;
-      const next = migrate(resolveAccountStore(u, data?.data, storeRef.current, freshStore));
+      const active = storeRef.current;
+      const local = active.userId === u.id ? active : loadAccountStore(u.id) || active;
+      const next = migrate(resolveAccountStore(u, data?.data, local, freshStore));
+      next._revision = local.userId === u.id && local._pendingSync ? (local._revision || 0) : (data?.revision || 0);
+      if (local.userId === u.id && local._pendingSync && next._revision !== (data?.revision || 0)) { conflictRef.current = true; setSyncIssue("conflict"); }
       storeRef.current = next;
       replaceAll(next);
       syncedUserId.current = u.id;
@@ -275,7 +322,7 @@ export default function App() {
       }
       // Profile and community requests must not hold up onboarding.
       refreshPosts();
-      syncProfile(u, { displayName: next.name, avatarUrl: next.avatar, bio: next.bio }).catch(() => {});
+
     })().finally(() => {
       if (accountLoad.current === load) accountLoad.current = null;
     });
@@ -349,10 +396,19 @@ export default function App() {
     open, close, goTab,
     nextOb: () => { close(); setSelfFromOnboarding(false); setOb(2); },
     logout: async () => {
-      try { await supabase().auth.signOut(); } catch {}
+      if (storeRef.current._pendingSync && !(await doPush())) return "Your changes are still on this device. Save them before signing out.";
+      const { error } = await supabase().auth.signOut();
+      if (error) return "Couldn't sign out. Please try again.";
+      feedRequest.current++;
+      syncedUserId.current = null;
+      accountLoad.current = null;
+      userRef.current = null;
       setUser(null);
-    resetStore();
+      storeRef.current = freshStore();
+      resetStore();
+      conflictRef.current = false; setSyncIssue(null);
       setTab("home"); setOb(0); setAuthMode("start");
+      return null;
     },
   };
 
@@ -449,6 +505,17 @@ export default function App() {
   // Returns an error string, or null on success.
   const setPostVisibility = async (post, visibility) => {
     const v = visibility === "com" ? "com" : "me";
+    if (suspended) return "Community posting is restricted for this account.";
+    if (v === "com" && String(post.id).startsWith("p")) {
+      if (!user) return "Sign in to share this post.";
+      const owner = user.id;
+      try {
+        await insertPost(supabase(), { user_id: owner, body: post.t, visibility: "community", stage: post.stage || "", display_name: storeRef.current.name, _av: storeRef.current.avatar, _bio: storeRef.current.bio, _days: daysSince(storeRef.current.start) });
+        if (userRef.current?.id !== owner) return "Account changed. Please try again.";
+        update((prev) => ({ posts: prev.posts.filter((p) => p.id !== post.id) }));
+        await refreshPosts(); return null;
+      } catch { return "Couldn't publish the post. It is still private on this device."; }
+    }
     update((prev) => ({ posts: prev.posts.map((p) => (p.id === post.id ? { ...p, v } : p)) }));
     if (user && !String(post.id).startsWith("p")) {
       try {
@@ -467,26 +534,74 @@ export default function App() {
   };
 
   const deletePost = async (post) => {
-    update({ posts: store.posts.filter((x) => x.id !== post.id) });
-    close();
-    if (user && post.mine && !String(post.id).startsWith("p")) {
-      try { await supabase().from("posts").delete().eq("id", post.id); } catch {}
-    }
+    const owner = userRef.current?.id;
+    try {
+      if (owner && post.mine && !String(post.id).startsWith("p")) {
+        const { error } = await supabase().from("posts").delete().eq("id", post.id).eq("user_id", owner);
+        if (error) throw error;
+      }
+      if (owner !== userRef.current?.id) return "Account changed. Please try again.";
+      update((prev) => ({ posts: prev.posts.filter((x) => x.id !== post.id) }));
+      close();
+      return null;
+    } catch { return "Couldn't delete the post. It is still saved. Please try again."; }
   };
 
   const wipeAll = async () => {
-    if (user) {
-      try {
-        const a = supabase();
-        await a.from("user_data").delete().eq("user_id", user.id);
-        await a.from("posts").delete().eq("user_id", user.id);
-      } catch {}
+    const owner = userRef.current?.id;
+    try {
+      clearTimeout(pushTimer.current);
+      if (saveTask.current) await saveTask.current;
+      if (owner) await deleteAccount();
+      // Invalidate all in-flight account work only after server confirmation.
+      feedRequest.current++;
+      syncedUserId.current = null;
+      accountLoad.current = null;
+      if (owner) await supabase().auth.signOut({ scope: "local" });
+      if (owner) forgetAccountStore(owner);
+      userRef.current = null;
       setUser(null);
-    }
-    resetStore();
-    setFilters({ time: "all", stage: "all", mine: false });
-    setTab("home"); setOb(0); setAuthMode("start"); close();
+      storeRef.current = freshStore();
+      resetStore();
+      conflictRef.current = false; setSyncIssue(null);
+      setFilters({ time: "all", stage: "all", mine: false });
+      setTab("home"); setOb(0); setAuthMode("start"); close();
+      return null;
+    } catch { return "Deletion was not confirmed. Your data has not been cleared from this device. Please try again."; }
   };
+
+  const syncNotice = (store._storageError || (user && (syncIssue || store._pendingSync))) ? (
+    <div className="card sync-notice" role="status">
+      {store._storageError ? "This browser couldn't save your progress. Free storage space before closing Steady." : syncIssue === "conflict"
+        ? "Your account has newer saved progress on another device. Your changes are safe on this device; choose which version to keep."
+        : syncIssue ? "Your changes are saved on this device but haven't synced yet." : "Saving your progress…"}
+      {syncIssue === "failed" && <button className="chip" onClick={doPush}>Retry save</button>}
+      {syncIssue === "conflict" && <button className="chip" onClick={() => open("syncConflict")}>Review saved progress</button>}
+    </div>
+  ) : null;
+
+  const conflictPanel = sheet?.name === "syncConflict" && <ConfirmSheet
+          title="Which progress should we keep?"
+          body="Keeping this device replaces the saved recovery snapshot in your account. Loading your account replaces unsynced recovery edits on this device. Private posts on this device are kept."
+          confirmLabel="Keep this device's progress"
+          cancelLabel="Load saved account progress"
+          onConfirm={async () => {
+            const owner = userRef.current?.id;
+            const { data, error } = await supabase().from("user_data").select("revision").eq("user_id", owner).maybeSingle();
+            if (error || owner !== userRef.current?.id) return "Couldn't check saved progress. Please try again.";
+            update({ _revision: data?.revision || 0 }); conflictRef.current = false; setSyncIssue(null);
+            if (!(await doPush())) return "Couldn't save yet. Please try again.";
+            close(); return null;
+          }}
+          onCancel={async () => {
+            const owner = userRef.current?.id;
+            const { data, error } = await supabase().from("user_data").select("data,revision").eq("user_id", owner).maybeSingle();
+            if (error || !data || owner !== userRef.current?.id) return "Couldn't load saved progress. Please try again.";
+            const local = { ...storeRef.current, _pendingSync: false };
+            const next = migrate(resolveAccountStore(userRef.current, data.data, local, freshStore));
+            next._revision = data.revision; next._pendingSync = false;
+            storeRef.current = next; replaceAll(next); conflictRef.current = false; setSyncIssue(null); close(); return null;
+          }} />;
 
   // Full-screen signing-in state while a Google redirect is processed.
   const veil = oauthBusy ? (
@@ -498,6 +613,27 @@ export default function App() {
       </div>
     </div>
   ) : null;
+
+  // Dedicated admin route (#/admin). Guarded inside AdminApp; the backend
+  // enforces admin rights independently via RLS on every query.
+  const adminPath = hash.startsWith("#/admin") ? (hash.slice("#/admin".length) || "/") : null;
+  if (adminPath != null) {
+    return (
+      <div id="app">
+        {veil}
+        <main id="main">
+          <Suspense fallback={<p className="mu" role="status">Loading admin tools…</p>}><AdminApp
+            user={user} mod={mod} path={adminPath} store={store} update={update}
+            onAuth={onAuth} authMode={authMode} setAuthMode={setAuthMode}
+            onExit={() => { window.location.hash = "#/"; }}
+            onSignOut={actions.logout}
+            refreshMod={refreshMod}
+          /></Suspense>
+        </main>
+        <nav id="nav" />
+      </div>
+    );
+  }
 
   if (!store.done) {
     // While the session is still resolving, show a launch splash instead of
@@ -521,11 +657,13 @@ export default function App() {
       <div id="app">
         {veil}
         <main id="main">
+          {syncNotice}
           <Onboarding store={store} update={update} ob={ob} setOb={setOb} authMode={authMode} setAuthMode={setAuthMode}
             onFinish={onFinishOnboarding} onAuth={onAuth} notice={oauthNote} />
         </main>
         <nav id="nav" />
         <Sheet open={!!sheet} onClose={close}>
+          {conflictPanel}
           {sheet?.name === "selfcheck" && <SelfCheckSheet onDone={(score) => { update({ test: score }); setSelfScore(score); open("selfresult"); }} />}
           {sheet?.name === "selfresult" && <SelfResult score={selfScore} done={store.done} actions={actions} />}
           {sheet?.name === "setpw" && <SetPwSheet onSave={async (v) => {
@@ -539,61 +677,6 @@ export default function App() {
           {sheet?.name === "donePw" && <><h2>Password updated</h2><button className="btn" onClick={close}>Done</button></>}
         </Sheet>
         <Modal data={modal} onClose={() => setModal(null)} />
-      </div>
-    );
-  }
-
-  // Dedicated admin route (#/admin). Guarded inside AdminApp; the backend
-  // enforces admin rights independently via RLS on every query.
-  const adminPath = hash.startsWith("#/admin") ? (hash.slice("#/admin".length) || "/") : null;
-  if (adminPath != null) {
-    return (
-      <div id="app">
-        {veil}
-        <main id="main">
-          <Suspense fallback={<p className="mu" role="status">Loading admin tools…</p>}><AdminApp
-            user={user} mod={mod} path={adminPath} store={store} update={update}
-            onAuth={onAuth} authMode={authMode} setAuthMode={setAuthMode}
-            onExit={() => { window.location.hash = "#/"; }}
-            onSignOut={actions.logout}
-            refreshMod={refreshMod}
-          /></Suspense>
-        </main>
-        <nav id="nav" />
-      </div>
-    );
-  }
-
-  // Suspended/banned accounts are stopped here; the database (RLS) blocks
-  // their writes independently so bypassing this screen achieves nothing.
-  if (suspended) {
-    const banned = mod.status === "banned";
-    return (
-      <div id="app">
-        {veil}
-        <main id="main">
-          <div className="ob in">
-            <h1>{banned ? "Account deactivated" : "Account suspended"}</h1>
-            <p className="mu">
-              {banned
-                ? "This account has been deactivated by the Steady team and can no longer use community features."
-                : "This account has been temporarily suspended and can't post or file reports right now."}{" "}
-              Your private recovery data on this device is untouched.
-            </p>
-            <p className="mu">If you think this is a mistake, contact Steady Support from the login screen or reply to any email from the team.</p>
-            <button className="btn sec" onClick={() => open("confirmLogout")}>Sign out</button>
-          </div>
-        </main>
-        <nav id="nav" />
-        <Sheet open={sheet?.name === "confirmLogout"} onClose={close}>
-          <ConfirmSheet
-            title="Sign out?"
-            body="You can sign back in anytime with the same account."
-            confirmLabel="Sign out"
-            onConfirm={() => { close(); actions.logout(); }}
-            onCancel={close}
-          />
-        </Sheet>
       </div>
     );
   }
@@ -613,9 +696,12 @@ export default function App() {
     <div id="app">
       {veil}
       <main id="main">
+        {syncNotice}
+        {suspended && <div className="card" role="status">Community posting is restricted for this account. Your recovery tools and Support are still available.</div>}
+        {!!mod.warnings && <p role="status">Your account has {mod.warnings} moderation warning(s). Please review the community rules.</p>}
         {tab === "home" && <Home store={store} actions={sheetActions} />}
         {tab === "rec" && <Recovery store={store} actions={sheetActions} />}
-        {tab === "com" && <Community store={store} filters={filters} setFilters={setFilters} onOpen={open} user={user} actions={sheetActions} onVisibility={setPostVisibility} />}
+        {tab === "com" && <Community store={store} filters={filters} setFilters={setFilters} onOpen={open} user={user} actions={sheetActions} onVisibility={setPostVisibility} more={morePosts} onMore={() => refreshPosts(true)} error={feedError} onRetry={() => refreshPosts()} blocked={suspended} />}
         {tab === "sup" && <Support store={store} update={update} actions={sheetActions} />}
         {tab === "prot" && <Protect store={store} onBack={() => goTab("sup")} />}
         {tab === "pro" && <Profile store={store} update={update} actions={actions} authed={!!user} userId={user?.id} />}
@@ -630,6 +716,7 @@ export default function App() {
       />
 
       <Sheet open={!!sheet} onClose={close}>
+        {conflictPanel}
         {sheet?.name === "urge" && urgeDraft && <UrgeSheet draft={urgeDraft} setDraft={setUrgeDraftLive} onContinue={continueUrge} onLogOnly={close} logged={store.urges.find((u) => u.t === urgeDraft.id)} />}
         {sheet?.name === "hub" && <HubSheet actions={sheetActions} />}
         {sheet?.name === "acts" && <ActsSheet actIndex={actIndex} onDone={completeAct} onSkip={() => setActIndex((i) => i + 1)} onStop={close} />}
@@ -673,20 +760,20 @@ export default function App() {
             onBack={close}
           />
         )}
-        {sheet?.name === "wipe" && <WipeSheet onConfirm={wipeAll} onCancel={close} />}
+        {sheet?.name === "wipe" && <WipeSheet authed={!!user} onConfirm={wipeAll} onCancel={close} />}
         {sheet?.name === "confirmLogout" && (
           <ConfirmSheet
             title="Sign out?"
             body="You can sign back in anytime with the same account."
             confirmLabel="Sign out"
-            onConfirm={() => { close(); actions.logout(); }}
+            onConfirm={actions.logout}
             onCancel={close}
           />
         )}
         {sheet?.name === "check" && <CheckSheet store={store} update={update} actions={sheetActions} />}
         {sheet?.name === "selfcheck" && <SelfCheckSheet onDone={(score) => { update({ test: score }); setSelfScore(score); open("selfresult"); }} />}
         {sheet?.name === "selfresult" && <SelfResult score={selfScore ?? store.test} done={store.done} actions={sheetActions} />}
-        {sheet?.name === "ai" && <AiSheet store={store} update={update} />}
+        {sheet?.name === "ai" && <AiSheet store={store} update={update} actions={sheetActions} />}
         {sheet?.name === "reassess" && <ReassessSheet onPick={pickReassess} />}
         {sheet?.name === "reassessResult" && <ReassessResult level={reassessLevel} actions={sheetActions} />}
         {sheet?.name === "setpw" && <SetPwSheet onSave={async (v) => {
@@ -715,3 +802,4 @@ export default function App() {
     </div>
   );
 }
+

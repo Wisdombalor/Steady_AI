@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { FilterIcon } from "./Icons";
 
-export function Community({ store, filters, setFilters, onOpen, user, actions, onVisibility }) {
+export function Community({ store, filters, setFilters, onOpen, user, actions, onVisibility, more, onMore, error, onRetry, blocked }) {
   const n = (filters.time !== "all") + (filters.stage !== "all") + (filters.mine ? 1 : 0);
   const now = Date.now(), D = 864e5;
   const tf = {
@@ -31,7 +31,7 @@ export function Community({ store, filters, setFilters, onOpen, user, actions, o
           <div className="com-actions">
             <button className={"chip" + (filters.mine ? " on" : "")} onClick={() => setFilters({ ...filters, mine: !filters.mine })}>My posts</button>
             <button className="chip" onClick={() => onOpen("filters")}><FilterIcon /> Filters{n ? <span className="bd">{n}</span> : null}</button>
-            <button className="chip on" onClick={() => onOpen("post")}>Share</button>
+            <button className="chip on" disabled={blocked} onClick={() => onOpen("post")}>Share</button>
           </div>
         )}
       </div>
@@ -66,7 +66,7 @@ export function Community({ store, filters, setFilters, onOpen, user, actions, o
           <p>{p.t}</p>
           <div className="row"><span className="mu">{new Date(p.d).toLocaleDateString()}</span>
             <span>
-              {user && p.mine && onVisibility && (
+              {user && p.mine && onVisibility && !blocked && (
                 <><button className="mu" onClick={() => flip(p)}>{p.v === "me" ? "Make public" : "Make private"}</button>{" · "}</>
               )}
               {p.mine
@@ -78,7 +78,10 @@ export function Community({ store, filters, setFilters, onOpen, user, actions, o
         );
       })}
       {visErr && <p style={{ color: "var(--bad)", fontSize: 14 }}>{visErr}</p>}
+      {error && <p role="alert">{error} <button className="chip" onClick={onRetry}>Retry</button></p>}
+      {more && <button className="btn sec" onClick={onMore}>Load older posts</button>}
       {!L.length && <p className="mu">{store.posts.length ? "No posts match these filters." : filters.mine ? "You haven't posted yet. Tap Share to write your first post." : user ? "No posts yet. Be the first to share your story." : "No posts yet. Check back soon."}</p>}
     </div>
   );
 }
+

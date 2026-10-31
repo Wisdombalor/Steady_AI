@@ -1,47 +1,34 @@
 import { SB_CONF } from "./data";
+import { supabase } from "./backend";
 
-const CHAT_URL = `${SB_CONF.url}/functions/v1/chat`;
-
-// Beacon chat goes ONLY through the deployed Supabase Edge Function
-// (secure Gemini proxy). No API keys in the UI, no direct calls to Google.
-export async function chatReply({ message, history }) {
-  let res;
+export async function chatReply({ message, history, country, signal }) {
+  const { data, error } = await supabase().auth.getSession();
+  if (error || !data.session) throw new Error("AUTH");
+  let response;
   try {
-    res = await fetch(CHAT_URL, {
+    response = await fetch(`${SB_CONF.url}/functions/v1/chat`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SB_CONF.key,
-      },
-      body: JSON.stringify({
-        message,
-        history: (history || []).slice(-10).map((m) => ({
-          role: m.r === "u" ? "user" : "model",
-          text: m.t,
-        })),
-      }),
+      headers: { "Content-Type": "application/json", apikey: SB_CONF.key, Authorization: `Bearer ${data.session.access_token}` },
+      body: JSON.stringify({ message, country, history: (history || []).slice(-10).map((m) => ({ role: m.r === "u" ? "user" : "model", text: m.t })) }),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(25000)]) : AbortSignal.timeout(25000),
     });
-  } catch {
-    throw new Error("NET");
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error(error.name === "TimeoutError" ? "TIMEOUT" : "NET");
   }
-  let data = null;
-  try { data = await res.json(); } catch {}
-  if (!res.ok) throw new Error("API:" + (data?.error || res.status));
-  if (!data?.reply) throw new Error("API:empty");
-  if (data?.fallback) console.warn("[beacon] saved fallback reply, reason:", data?.reason || "unknown");
-  else if (data?.via && data.via !== "gemini") console.info("[beacon] reply via failover:", data.via);
-  return {
-    text: data.reply,
-    fallback: !!data.fallback,
-    unavailable: !!data.unavailable,
-    retryAfterSeconds: Number(data.retryAfterSeconds) || 0,
-    via: data.via || "gemini",
-  };
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 401) throw new Error("AUTH");
+  if (response.status === 429) throw new Error("LIMIT");
+  if (!response.ok || !body.reply) throw new Error("API");
+  return { text: body.reply, fallback: !!body.fallback, unavailable: !!body.unavailable, retryAfterSeconds: Number(body.retryAfterSeconds) || 0 };
 }
 
-export function aiErrorMessage(e) {
-  const m = String(e?.message || "");
-  if (m === "NET") return "Couldn't reach Beacon. Check your connection and try again.";
-  if (m.startsWith("API")) return "Beacon returned an error. Try again.";
-  return "Beacon isn't available right now. Try an activity or call someone you trust.";
+export function aiErrorMessage(error) {
+  const messages = {
+    AUTH: "Sign in to use Beacon. Activities and local support are available without an account.",
+    LIMIT: "The chat limit is reached. Please try again later, or use an activity or local support.",
+    TIMEOUT: "Beacon took too long to reply. Please try again or open local support.",
+    NET: "Couldn't reach Beacon. Check your connection and try again.",
+  };
+  return messages[error?.message] || "Beacon isn't available right now. Try an activity or contact someone you trust.";
 }

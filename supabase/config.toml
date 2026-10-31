@@ -424,3 +424,18 @@ entrypoint = "./functions/chat/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/chat/*.html" ]
+
+[functions.delete-account]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/delete-account/index.ts"
+
+[functions.Steady]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/Steady/index.ts"
+
+[functions.GEMINI_API_KEY]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/GEMINI_API_KEY/index.ts"
