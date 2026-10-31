@@ -12,7 +12,7 @@ Tests include mounted React flows with simulated HTTP responses, Edge Function a
 
 ## Database and function release
 
-For a new database, apply `supabase/schema.sql` and then every file in `supabase/migrations/` in filename order. On an existing Steady database, apply only unapplied migrations; do not rerun the legacy bootstrap after the privacy migration because it recreates the old policies.
+For a new database, apply `supabase/schema.sql`, which includes the current security updates. On an existing Steady database, apply only unapplied files in `supabase/migrations/` in filename order. The migration filenames match the verified live migration history. The bootstrap is transactional and ends with the same security guarantees as the migrations.
 
 The privacy/reliability migration requires the existing Steady tables. It adds a sanitized public feed maintained by a database trigger, owner-only identity/recovery access, transactional moderation logs, revision-checked saves, and persistent chat quotas. It does not delete user recovery records.
 

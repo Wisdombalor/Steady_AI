@@ -1,6 +1,6 @@
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 
 const owner = "11111111-1111-4111-8111-111111111111";
@@ -16,6 +16,7 @@ async function asUser(id, run) {
 before(async () => {
   db = new PGlite();
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated;
+    ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO anon,authenticated;
     CREATE SCHEMA auth; CREATE SCHEMA storage;
     CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,raw_user_meta_data jsonb DEFAULT '{}');
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULLIF(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
@@ -26,10 +27,12 @@ before(async () => {
     CREATE FUNCTION storage.foldername(text) RETURNS text[] LANGUAGE sql AS $$ SELECT string_to_array($1,'/') $$;`);
   const schema = await readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8");
   await db.exec(schema.replace('CREATE EXTENSION IF NOT EXISTS "pgcrypto";', ""));
-  const migration = await readFile(new URL("../supabase/migrations/202610290001_privacy_and_reliability.sql", import.meta.url), "utf8");
-  await db.exec(migration);
-  // Reapplying must not reopen policies or duplicate triggers.
-  await db.exec(migration);
+  const directory = new URL("../supabase/migrations/", import.meta.url);
+  for (const file of (await readdir(directory)).filter(name=>name.endsWith(".sql")).sort()) {
+    const migration = await readFile(new URL(file,directory), "utf8");
+    await db.exec(migration);
+    await db.exec(migration);
+  }
   await db.query("INSERT INTO auth.users(id,email) VALUES($1,'owner@example.test'),($2,'other@example.test'),($3,'admin@example.test')", [owner,other,admin]);
   await db.query("UPDATE public.profiles SET is_admin=true WHERE user_id=$1", [admin]);
   await db.query("INSERT INTO public.posts(user_id,body,visibility,display_name,avatar_url,bio) VALUES($1,'Anonymous story','anon','Private Identity','avatar-secret','bio-secret'),($1,'Private journal','private','Private Identity','',''),($1,'Public story','community','Public Name','','')", [owner]);
@@ -87,4 +90,11 @@ test("compare-and-save rejects stale data without changing saved progress", () =
 test("AI quota persists in the database and rejects requests beyond 30 per hour", () => asUser(other, async () => {
   for(let index=0;index<30;index++) assert.equal((await db.query("SELECT public.consume_chat_request() AS allowed")).rows[0].allowed,true);
   assert.equal((await db.query("SELECT public.consume_chat_request() AS allowed")).rows[0].allowed,false);
+}));
+
+test("Supabase default grants cannot make account-save and quota RPCs anonymous",()=>asUser(null,async()=>{
+  for(const signature of ["public.save_recovery_data(jsonb,bigint)","private.save_recovery_data(jsonb,bigint)","public.consume_chat_request()","private.consume_chat_request()","private.has_account()"]){
+    const result=await db.query("SELECT has_function_privilege('anon',$1,'EXECUTE') AS allowed",[signature]);
+    assert.equal(result.rows[0].allowed,false,signature);
+  }
 }));
