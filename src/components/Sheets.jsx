@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { TRIG, EMO, ACTS, PGSI, CO } from "../lib/data";
-import { mmss, daysSince, bestStreak, today, urgeTrigs, urgeEmos, missingPwReqs } from "../lib/helpers";
+import { mmss, daysSince, bestStreak, today, urgeTrigs, urgeEmos, missingPwReqs, sanitizeNameInput, isValidName } from "../lib/helpers";
 import { Chips, PasswordInput } from "./Chrome";
 import { BackIcon } from "./Icons";
 import { PwChecklist } from "./Onboarding";
@@ -20,7 +20,7 @@ function MultiPick({ options, values, onToggle, placeholder }) {
     <>
       <div className="chips">
         {options.map((x) => (
-          <button key={x} className={"chip " + (values.includes(x) ? "on" : "")} onClick={() => onToggle(x)}>{x}</button>
+          <button key={x} className={"chip " + (values.includes(x) ? "on" : "")} aria-pressed={values.includes(x)} onClick={() => onToggle(x)}>{x}</button>
         ))}
       </div>
       {customs.length > 0 && (
@@ -31,7 +31,7 @@ function MultiPick({ options, values, onToggle, placeholder }) {
         </div>
       )}
       <div className="row" style={{ gap: 8, marginTop: 8 }}>
-        <input placeholder={placeholder} value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ flex: 1, margin: 0 }} />
+        <input aria-label={placeholder} placeholder={placeholder} value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ flex: 1, margin: 0 }} />
         <button className="chip on" onClick={add} style={{ flex: "none" }}>Add</button>
       </div>
     </>
@@ -56,7 +56,7 @@ export function UrgeSheet({ draft, setDraft, onContinue, onLogOnly, logged }) {
         </p>
       )}
       <h2>How strong is the urge?</h2>
-      <input type="range" min={1} max={10} value={level} onChange={(e) => { setLevel(+e.target.value); setDraft({ ...draft, before: +e.target.value }); }} />
+      <input aria-label="Urge strength" type="range" min={1} max={10} value={level} onChange={(e) => { setLevel(+e.target.value); setDraft({ ...draft, before: +e.target.value }); }} />
       <p className="big">{level}</p>
       <h2>What&apos;s happening? (pick all that apply)</h2>
       <MultiPick options={TRIG} values={trigs} onToggle={(v) => toggle("trigs", v)} placeholder="Something else… type it here" />
@@ -149,8 +149,8 @@ export function TrustSheet({ store, update, actions, editIndex }) {
     const clean = String(n ?? "").trim().replace(/\s+/g, " ");
     const cleanRel = String(rel ?? "").trim().replace(/\s+/g, " ");
     if (!clean) { setErr("Enter their name."); return; }
-    if (!/^[\p{L} ]+$/u.test(clean)) { setErr("Please use letters only for the name — no numbers or symbols."); return; }
-    if (cleanRel && !/^[\p{L} ]+$/u.test(cleanRel)) { setErr("Please use letters only for the relationship — no numbers or symbols."); return; }
+    if (!isValidName(clean)) { setErr("Use a name up to 80 characters."); return; }
+    if (cleanRel && !isValidName(cleanRel)) { setErr("Use a relationship up to 80 characters."); return; }
     if (!/^\+?[0-9\s\-()]+$/.test(p.trim()) || p.replace(/\D/g, "").length < 7 || p.replace(/\D/g, "").length > 15) {
       setErr("Enter a valid phone number using digits only, e.g. 08012345678 or +2348012345678."); return;
     }
@@ -165,9 +165,9 @@ export function TrustSheet({ store, update, actions, editIndex }) {
   return (
     <>
       <h2>{editIndex != null ? "Edit trusted person" : "Add a trusted person"}</h2>
-      <input placeholder="Name" value={n} onChange={(e) => setN(String(e.target.value).replace(/[^\p{L} ]/gu, ""))} />
-      <input placeholder="Relationship" value={rel} onChange={(e) => setRel(String(e.target.value).replace(/[^\p{L} ]/gu, ""))} />
-      <input type="tel" inputMode="tel" placeholder="Phone number" value={p} onChange={(e) => setP(e.target.value)} />
+      <input aria-label="Trusted person name" placeholder="Name" value={n} onChange={(e) => setN(sanitizeNameInput(e.target.value))} />
+      <input aria-label="Relationship" placeholder="Relationship" value={rel} onChange={(e) => setRel(sanitizeNameInput(e.target.value))} />
+      <input aria-label="Phone number" type="tel" inputMode="tel" placeholder="Phone number" value={p} onChange={(e) => setP(e.target.value)} />
       <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
       <button className="btn" onClick={save}>{editIndex != null ? "Save changes" : "Save"}</button>
     </>
@@ -260,14 +260,14 @@ export function PostSheet({ store, user, onPost, actions }) {
   return (
     <>
       <h2>Share your story</h2>
-      <textarea rows={4} placeholder="What helped today?" value={t} onChange={(e) => setT(e.target.value)} />
+      <textarea aria-label="Your story" maxLength={10000} rows={4} placeholder="What helped today?" value={t} onChange={(e) => setT(e.target.value)} />
       <label>Who can see this?
         <select value={v} onChange={(e) => { setV(e.target.value); setNeedsAuth(false); setErr(""); }}>
           <option value="me">Only me</option>
           <option value="com">Public</option>
         </select>
       </label>
-      <p className="mu">Public posts show your name to the whole community. Only me stays on this device.</p>
+      <p className="mu">Public posts show your name to the whole community. Private posts are visible only to you. When signed in, new posts are stored in your account; guest posts remain on this device until you publish them.</p>
       <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
       <button className="btn" disabled={busy} onClick={submit}>{busy ? "Posting…" : "Post"}</button>
       {needsAuth && !user && actions && (
@@ -296,26 +296,28 @@ export function FiltersSheet({ filters, setFilters, onApply }) {
 }
 
 export function DeleteSheet({ onConfirm, onCancel, title, body }) {
-  return (
-    <div className="confirm-in">
-      <h2>{title ?? "Delete this post?"}</h2>
-      <p className="mu">{body ?? "It will be permanently removed. This cannot be undone."}</p>
-      <button className="btn" style={{ background: "var(--bad)" }} onClick={onConfirm}>Yes, delete</button>
-      <br /><br />
-      <button className="btn sec" onClick={onCancel}>Cancel</button>
-    </div>
-  );
+  return <ConfirmSheet title={title ?? "Delete this post?"} body={body ?? "It will be permanently removed. This cannot be undone."}
+    confirmLabel="Yes, delete" danger onConfirm={onConfirm} onCancel={onCancel} />;
 }
 
-// Generic "are you sure?" step before a major action (log out, etc.).
-export function ConfirmSheet({ title, body, confirmLabel, danger, onConfirm, onCancel }) {
+export function ConfirmSheet({ title, body, confirmLabel, cancelLabel = "Cancel", danger, onConfirm, onCancel }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const run = async (action) => {
+    if (busy) return;
+    setBusy(true); setError("");
+    try { const message = await action(); if (message) setError(message); }
+    catch { setError("Couldn't complete this action. Please try again."); }
+    finally { setBusy(false); }
+  };
   return (
-    <div className="confirm-in">
+    <div className="confirm-in" aria-busy={busy}>
       <h2>{title}</h2>
       {body ? <p className="mu">{body}</p> : null}
-      <button className="btn" style={danger ? { background: "var(--bad)" } : null} onClick={onConfirm}>{confirmLabel || "Confirm"}</button>
+      {error && <p role="alert">{error}</p>}
+      <button className="btn" disabled={busy} style={danger ? { background: "var(--bad)" } : null} onClick={() => run(onConfirm)}>{busy ? "Please wait…" : confirmLabel || "Confirm"}</button>
       <br /><br />
-      <button className="btn sec" onClick={onCancel}>Cancel</button>
+      <button className="btn sec" disabled={busy} onClick={() => run(onCancel)}>{cancelLabel}</button>
     </div>
   );
 }
@@ -400,6 +402,9 @@ export function RequestSheet({ store, update, actions }) {
   // Guards late responses: only the latest submit may change state, so
   // cancelling can never be overridden by a hung request resolving late.
   const reqId = useRef(0);
+  const requestController = useRef(null);
+  const queuedId = useRef(null);
+  useEffect(() => () => { reqId.current++; requestController.current?.abort(); }, []);
 
   const submit = async () => {
     if (sending) return;
@@ -410,16 +415,22 @@ export function RequestSheet({ store, update, actions }) {
     const id = ++reqId.current;
     setErr("");
     setSending(true);
-    const sent = await sendReport("Steady: new support request",
-      { name, contact, preferred: pref, message: msg, country: CO[store.country].n },
-      (o) => update({ outbox: [...store.outbox, o] }));
-    if (reqId.current !== id) return;
-    setSending(false);
-    setOk(sent);
-    setState("done");
+    requestController.current?.abort();
+    const controller = new AbortController(); requestController.current = controller;
+    const messageId = queuedId.current || crypto.randomUUID(); queuedId.current = messageId;
+    // Retrying the form replaces its queued copy instead of adding a duplicate.
+    update((prev) => ({ outbox: prev.outbox.filter((x) => x.id !== messageId) }));
+    try {
+      const sent = await sendReport("Steady: new support request",
+        { name, contact, preferred: pref, message: msg, country: CO[store.country].n, request_id: messageId },
+        (o) => { if (!controller.signal.aborted) update((prev) => ({ outbox: [...prev.outbox.filter((x) => x.id !== messageId), { ...o, id: messageId }] })); }, controller.signal);
+      if (reqId.current !== id) return;
+      setOk(sent); setState("done");
+    } catch { if (!controller.signal.aborted) setErr("Couldn't send. Please try again."); }
+    finally { if (reqId.current === id) setSending(false); }
   };
 
-  const cancelSend = () => { reqId.current++; setSending(false); };
+  const cancelSend = () => { reqId.current++; requestController.current?.abort(); setSending(false); setErr("Stopped waiting. If the service already received your request, it may still be delivered."); };
 
   if (state === "done") {
     return ok ? (
@@ -432,7 +443,7 @@ export function RequestSheet({ store, update, actions }) {
     ) : (
       <div className="confirm-in">
         <h2>Couldn&apos;t send it</h2>
-        <p className="mu">We couldn&apos;t reach the support service. Your request is saved on this device and will be sent automatically once you&apos;re back online.</p>
+        <p className="mu">We couldn&apos;t reach the support service. Your request is saved on this device and will be retried while Steady is open and online.</p>
         <button className="btn" onClick={() => { setState("form"); }}>Try again</button>
         <button className="btn sec" style={{ marginTop: 8 }} onClick={actions.close}>Done</button>
       </div>
@@ -441,12 +452,13 @@ export function RequestSheet({ store, update, actions }) {
   return (
     <>
       <h2>Request support</h2>
-      <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} disabled={sending} />
-      <input placeholder="Email or phone" value={contact} onChange={(e) => setContact(e.target.value)} disabled={sending} />
+      <p className="mu">Your name, contact details and message are sent through FormSubmit to Steady Support. This is not an emergency service.</p>
+      <input aria-label="Your name" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} disabled={sending} />
+      <input aria-label="Email or phone" placeholder="Email or phone" value={contact} onChange={(e) => setContact(e.target.value)} disabled={sending} />
       <label>How should we contact you?
         <select value={pref} onChange={(e) => setPref(e.target.value)} disabled={sending}><option>Email</option><option>Phone call</option><option>Both</option></select>
       </label>
-      <textarea rows={3} placeholder="What would you like help with?" value={msg} onChange={(e) => setMsg(e.target.value)} disabled={sending} />
+      <textarea aria-label="Support request message" rows={3} placeholder="What would you like help with?" value={msg} onChange={(e) => setMsg(e.target.value)} disabled={sending} />
       <p style={{ color: "var(--bad)", fontSize: 14, minHeight: 20, margin: "0 0 8px" }}>{err}</p>
       <button className="btn" disabled={sending} onClick={submit}>{sending ? "Sending…" : "Request support"}</button>
       {sending && (
@@ -471,19 +483,14 @@ export function RelapseSheet({ onNew, onClose }) {
   );
 }
 
-export function WipeSheet({ onConfirm, onCancel }) {
+export function WipeSheet({ authed, onConfirm, onCancel }) {
   const [ack, setAck] = useState(false);
   return (
     <div className="confirm-in">
-      <h2>Delete all your data?</h2>
-      <p className="mu">Your name, recovery dates, urge history, posts and contacts will be removed from this device. This cannot be undone.</p>
-      <label className="ack">
-        <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
-        <span>I understand my data will be permanently deleted.</span>
-      </label>
-      <button className="btn" style={{ background: "var(--bad)", opacity: ack ? 1 : 0.5 }} disabled={!ack} onClick={onConfirm}>Delete everything</button>
-      <br /><br />
-      <button className="btn sec" onClick={onCancel}>Cancel</button>
+      <h2>{authed ? "Delete your account and data?" : "Delete this device's data?"}</h2>
+      <p className="mu">{authed ? "This deletes your account, saved recovery data, posts, profile, uploaded pictures and associated reports. It also clears this device. Messages already delivered to support or an AI provider cannot be recalled." : "Your recovery data and conversations will be removed from this browser. Messages already delivered to external services cannot be recalled."} This cannot be undone.</p>
+      <label className="ack"><input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /><span>I understand this is permanent.</span></label>
+      {ack ? <ConfirmSheet title="Confirm permanent deletion" confirmLabel="Delete everything" danger onConfirm={onConfirm} onCancel={onCancel} /> : <button className="btn sec" onClick={onCancel}>Cancel</button>}
     </div>
   );
 }
@@ -501,7 +508,7 @@ export function CheckSheet({ store, update, actions }) {
       <h2>Daily check-in</h2>
       <label>Mood: <b>{mood}</b>/10<input type="range" min={1} max={10} value={mood} onChange={(e) => setMood(+e.target.value)} /></label>
       <label>Urge level: <b>{urge}</b>/10<input type="range" min={1} max={10} value={urge} onChange={(e) => setUrge(+e.target.value)} /></label>
-      <textarea rows={2} placeholder="Anything you'd like to record? (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+      <textarea aria-label="Check-in note (optional)" rows={2} placeholder="Anything you'd like to record? (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
       <button className="btn" onClick={save}>Save check-in</button>
     </>
   );
@@ -572,8 +579,11 @@ export function ReassessResult({ level, actions }) {
 const AI_QUICK = ["I really want to bet right now","I'm bored and restless","I relapsed","Help me find a trigger"];
 const AI_GREETING = (name) => `Hi ${name}, I'm Beacon. I'm here for the next few minutes, not to fix everything. What's going on right now?`;
 
-export function AiSheet({ store, update }) {
+export function AiSheet({ store, update, actions }) {
   const chats = store.chats || [];
+  const [consent, setConsent] = useState(false);
+  const controllerRef = useRef(null);
+  useEffect(() => () => controllerRef.current?.abort(), []);
   const [activeId, setActiveId] = useState(() => (chats.length ? chats[chats.length - 1].id : null));
   const [view, setView] = useState("thread");
   const [input, setInput] = useState("");
@@ -594,7 +604,7 @@ export function AiSheet({ store, update }) {
     return () => clearInterval(t);
   }, [resting, restoreAt]);
   const restMsg = !resting ? null : (restoreAt === Infinity
-    ? "Today's AI limit is reached. Back after midnight Pacific."
+    ? "The AI limit is reached. Please try again later."
     : `Back in about ${Math.max(1, Math.ceil((restoreAt - nowMs) / 60000))} min.`);
   const boxRef = useRef(null);
 
@@ -621,16 +631,13 @@ export function AiSheet({ store, update }) {
     if (!t || busy || resting) return;
     setInput("");
     const { id, convoMsgs } = ensureConvo(t);
-    if (/suicid|kill myself|end my life|self.harm|hurt myself|want to die/i.test(t)) {
-      appendMsgs(id, [{ r: "a", t: "This sounds like an emergency. Your life matters — please reach out right now:\n" + CO[store.country].r.map((x) => x.o + ": " + x.p).join("\n") + "\nGlobal support: Gambling Therapy (gamblingtherapy.org) · Gamblers Anonymous (gamblersanonymous.org)" }]);
-      return;
-    }
     if (activeId) appendMsgs(id, [{ r: "u", t }]);
     setBusy(true);
     try {
       const last = convoMsgs[convoMsgs.length - 1];
       const hist = last && last.r === "u" && last.t === t ? convoMsgs.slice(0, -1) : convoMsgs;
-      const res = await chatReply({ message: t, history: hist });
+      controllerRef.current = new AbortController();
+      const res = await chatReply({ message: t, history: hist, country: store.country, signal: controllerRef.current.signal });
       if (res.unavailable) {
         // Out of tokens: park Beacon instead of looping saved replies.
         const s = res.retryAfterSeconds;
@@ -640,7 +647,7 @@ export function AiSheet({ store, update }) {
         appendMsgs(id, [{ r: "a", t: res.fallback ? res.text + "\n\n(Saved reply — Beacon is offline right now.)" : res.text }]);
       }
     } catch (e) {
-      appendMsgs(id, [{ r: "a", t: aiErrorMessage(e) }]);
+      if (!controllerRef.current?.signal.aborted) appendMsgs(id, [{ r: "a", t: aiErrorMessage(e) }]);
     }
     setBusy(false);
   };
@@ -652,6 +659,14 @@ export function AiSheet({ store, update }) {
     if (id === activeId) { setActiveId(null); setView("list"); }
     setConfirmDel(null);
   };
+
+  if (!consent) return <>
+    <h2>Before you talk to Beacon</h2>
+    <p>Beacon is an AI companion, not a therapist or emergency service. Your message and up to 10 recent messages are sent to Google Gemini to generate a reply. Conversations are saved on this device and sync when you sign in.</p>
+    <p>You need an account to use AI chat. Recovery activities and local support remain available without one.</p>
+    <button className="btn" onClick={() => setConsent(true)}>I understand — open chat</button>
+    <button className="btn sec" onClick={() => actions.goTab("sup")}>Open local support</button>
+  </>;
 
   if (view === "list") {
     return (
@@ -690,6 +705,7 @@ export function AiSheet({ store, update }) {
   return (
     <div className="ai-wrap">
       <h2 className="sr-only">Talk to Beacon</h2>
+      <p className="mu">AI can make mistakes. For urgent help, <button className="tel" onClick={() => actions.goTab("sup")}>open local support</button>.</p>
       <div className="row" style={{ alignItems: "center" }}>
         <button className="chip" onClick={() => setView("list")} aria-label="Back to all chats"><BackIcon /> All chats</button>
         <span className="mu">{active ? `Day ${active.days}` : "New chat"}</span>
@@ -738,3 +754,4 @@ export function SetPwSheet({ onSave }) {
     </>
   );
 }
+

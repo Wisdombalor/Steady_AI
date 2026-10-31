@@ -6,7 +6,7 @@ export function Support({ store, update, actions }) {
   return (
     <div className="in">
       <h1>Support</h1>
-      <select value={store.country} onChange={(e) => update({ country: e.target.value })}>
+      <select aria-label="Support country" value={store.country} onChange={(e) => update({ country: e.target.value })}>
         {Object.entries(CO).map(([k, v]) => <option key={k} value={k}>{v.n}</option>)}
       </select>
       <p className="mu">Numbers can change. Confirm any line before relying on it.</p>
@@ -55,3 +55,4 @@ export function Protect({ store, onBack }) {
     </div>
   );
 }
+

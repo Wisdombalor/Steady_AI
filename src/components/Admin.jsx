@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase, writeAudit } from "../lib/backend";
+import { supabase } from "../lib/backend";
 import { ADMIN_EMAILS } from "../lib/data";
 import { Login, Signup } from "./Onboarding";
 import { Chips, Sheet } from "./Chrome";
@@ -16,14 +16,9 @@ function dbErr(e) {
   return m || "Something went wrong.";
 }
 
-async function logAudit(adminId, action, targetType, targetId, prev, next) {
-  try {
-    await writeAudit(adminId, action, targetType, targetId, prev, next);
-    return null;
-  } catch (e) {
-    return dbErr(e);
-  }
-}
+// Moderation history is written by transactional database triggers. The
+// legacy action helper remains promise-shaped for the existing UI handlers.
+async function logAudit() { return null; }
 
 export function AdminApp({ user, mod, path, store, update, onAuth, authMode, setAuthMode, onExit, onSignOut, refreshMod }) {
   const [checking, setChecking] = useState(false);
@@ -206,6 +201,7 @@ async function fetchProfiles(ids) {
 
 function ReportsPage({ adminId, ask }) {
   const [reports, setReports] = useState([]);
+  const [reportLimit, setReportLimit] = useState(200);
   const [names, setNames] = useState(new Map());
   const [fs, setFs] = useState("all");
   const [ft, setFt] = useState("all");
@@ -219,13 +215,13 @@ function ReportsPage({ adminId, ask }) {
     setErr("");
     try {
       const a = supabase();
-      const { data, error } = await a.from("reports").select("*").order("created_at", { ascending: false }).limit(200);
+      const { data, error } = await a.from("reports").select("*").order("created_at", { ascending: false }).limit(reportLimit);
       if (error) throw error;
       setReports(data || []);
       setNames(await fetchProfiles((data || []).flatMap((r) => [r.reporter_id, r.reported_user_id])));
     } catch (e) { setErr(dbErr(e)); }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [reportLimit]);
 
   const open = async (r) => {
     setOpenId(r.id);
@@ -339,7 +335,8 @@ function ReportsPage({ adminId, ask }) {
           )}
         </div>
       ))}
-      {!list.length && !err && <p className="mu">No reports match.</p>}
+      {reports.length >= reportLimit && <button className="btn sec" onClick={() => setReportLimit((n) => n + 200)}>Load older reports</button>}
+      {!list.length && !err && <p className="mu">No reports match in the loaded records.</p>}
     </>
   );
 }
@@ -398,6 +395,7 @@ function ReportDetail({ r, detail, modName, onStatus, onPost, onUser, ask }) {
 function PostsPage({ adminId, ask }) {
   const [id, setId] = useState("");
   const [found, setFound] = useState(null);
+  const [postLimit, setPostLimit] = useState(50);
   const [browse, setBrowse] = useState([]);
   const [fStatus, setFStatus] = useState("all");
   const [author, setAuthor] = useState(null);
@@ -407,14 +405,14 @@ function PostsPage({ adminId, ask }) {
 
   const loadBrowse = async (status) => {
     try {
-      let q = supabase().from("posts").select("*").order("created_at", { ascending: false }).limit(50);
+      let q = supabase().from("posts").select("*").order("created_at", { ascending: false }).limit(postLimit);
       if (status !== "all") q = q.eq("status", status);
       const { data, error } = await q;
       if (error) throw error;
       setBrowse(data || []);
     } catch (e) { setErr(dbErr(e)); }
   };
-  useEffect(() => { loadBrowse(fStatus); }, [fStatus]);
+  useEffect(() => { loadBrowse(fStatus); }, [fStatus, postLimit]);
 
   const lookup = async () => {
     setErr(""); setMsg(""); setFound(null); setAuthor(null); setPostReports([]);
@@ -479,6 +477,7 @@ function PostsPage({ adminId, ask }) {
       <Chips options={["all", "active", "hidden", "removed"]} value={fStatus} onPick={setFStatus} />
       <p className="mu">{browse.length} post(s), newest first</p>
       {browse.map((p) => <Card key={p.id} p={p} />)}
+      {browse.length >= postLimit && <button className="btn sec" onClick={() => setPostLimit((n) => n + 50)}>Load older posts</button>}
       {!browse.length && !err && <p className="mu">No posts with this status.</p>}
     </>
   );
@@ -598,22 +597,24 @@ function UsersPage({ adminId, ask }) {
 }
 
 function HistoryPage() {
+  const [historyLimit, setHistoryLimit] = useState(100);
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   useEffect(() => {
     (async () => {
       try {
-        const { data, error } = await supabase().from("moderation_log").select("*").order("created_at", { ascending: false }).limit(100);
+        const { data, error } = await supabase().from("moderation_log").select("*").order("created_at", { ascending: false }).limit(historyLimit);
         if (error) throw error;
         setRows(data || []);
       } catch (e) { setErr(dbErr(e)); }
     })();
-  }, []);
+  }, [historyLimit]);
   if (err) return <div className="card"><b>Error</b><p className="mu">{err}</p></div>;
   if (!rows) return <p className="mu">Loading…</p>;
   if (!rows.length) return <p className="mu">No admin actions yet. Actions you take will appear here.</p>;
   return (
     <>
+      {rows.length >= historyLimit && <button className="btn sec" onClick={() => setHistoryLimit((n) => n + 100)}>Load older actions</button>}
       {rows.map((r) => (
         <div className="card" key={r.id}>
           <p style={{ margin: 0 }}><b>{r.action}</b> · {r.target_type} {String(r.target_id).slice(0, 13)}</p>
@@ -625,3 +626,4 @@ function HistoryPage() {
     </>
   );
 }
+

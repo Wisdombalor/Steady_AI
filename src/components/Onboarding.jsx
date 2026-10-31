@@ -73,8 +73,8 @@ function Welcome({ store, update, setAuthMode, onAuth, notice }) {
 
   const cont = () => {
     const clean = normalizeName(name);
-    if (clean.length < 2) { setErr("Please enter your name to continue."); return; }
-    if (!isValidName(clean)) { setErr("Please use letters only for your name — no numbers or symbols."); return; }
+    if (clean.length < 1) { setErr("Please enter your name to continue."); return; }
+    if (!isValidName(clean)) { setErr("Use a name up to 80 characters. Letters, spaces, apostrophes and hyphens are welcome."); return; }
     update({ name: clean, country });
     onAuth({ nextOb: 1 });
   };
@@ -119,8 +119,8 @@ export function Signup({ store, update, setAuthMode, onAuth }) {
   const submit = async () => {
     if (busy) return;
     const clean = normalizeName(name);
-    if (clean.length < 2) { setErr("Please enter your name."); return; }
-    if (!isValidName(clean)) { setErr("Please use letters only for your name — no numbers or symbols."); return; }
+    if (clean.length < 1) { setErr("Please enter your name."); return; }
+    if (!isValidName(clean)) { setErr("Use a name up to 80 characters. Letters, spaces, apostrophes and hyphens are welcome."); return; }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) { setErr("Enter a valid email address."); return; }
     const missing = missingPwReqs(pw);
     if (missing.length) { setErr("Password is too weak — it needs: " + missing.join(", ") + "."); return; }
@@ -329,3 +329,4 @@ export function RecoverySetup({ store, update, onFinish, onBack }) {
     </form>
   );
 }
+

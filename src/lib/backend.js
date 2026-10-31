@@ -11,7 +11,7 @@ export function supabase() {
   return client;
 }
 
-export async function sendReport(subject, f, onQueued) {
+export async function sendReport(subject, f, onQueued, signal) {
   try {
     // Never hang forever: a stuck mail service must resolve to the queued
     // path (with its retry UI) instead of a permanent "sending" state.
@@ -19,26 +19,27 @@ export async function sendReport(subject, f, onQueued) {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ _subject: subject, _captcha: "false", _template: "table", ...f }),
-      signal: AbortSignal.timeout(20000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
     });
     if (!r.ok) throw new Error("send failed");
     return true;
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     if (onQueued) onQueued({ subject, f, t: Date.now() });
     return false;
   }
 }
 
-export async function loadPosts(user) {
+export async function loadPosts(user, page = 0) {
   const a = supabase();
   const [pub, own] = await Promise.all([
-    a.from("community_posts").select("*").order("created_at", { ascending: false }).limit(100),
-    user ? a.from("posts").select("*").order("created_at", { ascending: false }).limit(100) : Promise.resolve({ data: [] }),
+    a.from("community_posts").select("*").order("created_at", { ascending: false }).order("id").range(page * 100, page * 100 + 99),
+    user ? a.from("posts").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).order("id").range(page * 100, page * 100 + 99) : Promise.resolve({ data: [] }),
   ]);
   if (pub.error) throw pub.error;
-  // Ownership is decided per-row by author id. (The `own` query can also
-  // return other people's public posts via the community read policy, so
-  // membership in its result must NOT imply ownership.)
+  if (own.error) throw own.error;
+  // Ownership is decided per-row by author ID, even with the owner-filtered
+  // query. Public feed entries never imply ownership.
   const uid = user?.id || null;
   const mp = new Map();
   const m = (x, v) => ({
@@ -90,9 +91,9 @@ export async function getModState(userId) {
   try {
     if (!userId) return { role: "user", status: "active" };
     const a = supabase();
-    const { data, error } = await a.from("profiles").select("is_admin,status").eq("user_id", userId).maybeSingle();
+    const { data, error } = await a.from("profiles").select("is_admin,status,warned_count").eq("user_id", userId).maybeSingle();
     if (error || !data) return { role: "user", status: "active" };
-    return { role: data.is_admin ? "admin" : "user", status: data.status || "active" };
+    return { role: data.is_admin ? "admin" : "user", status: data.status || "active", warnings: data.warned_count || 0 };
   } catch {
     return { role: "user", status: "active" };
   }
@@ -174,5 +175,12 @@ export async function uploadAvatar(file, userId) {
   const { data } = a.storage.from("avatars").getPublicUrl(path);
   const url = data?.publicUrl;
   if (!url) throw new Error("Couldn't upload the picture. Try again.");
-  return url;
+  return `${url}?v=${Date.now()}`;
 }
+
+export async function deleteAccount() {
+  const { data, error } = await supabase().functions.invoke("delete-account");
+  if (error || !data?.deleted) throw error || new Error("Account deletion was not confirmed. Please try again.");
+  return true;
+}
+

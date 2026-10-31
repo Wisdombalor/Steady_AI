@@ -87,11 +87,11 @@ export const urgeEmos = (u) => {
 };
 
 // Names: letters only — no numbers, no symbols
-export const sanitizeNameInput = (v) => String(v ?? "").replace(/[^\p{L} ]/gu, "");
+export const sanitizeNameInput = (v) => String(v ?? "").normalize("NFC").replace(/[\u0000-\u001f\u007f]/g, "");
 
 export const isValidName = (name) => {
   const t = String(name ?? "").trim().replace(/\s+/g, " ");
-  return t.length >= 2 && /^[\p{L} ]+$/u.test(t);
+  return t.length >= 1 && t.length <= 80 && /^[\p{L}\p{M}][\p{L}\p{M} .'’\-]*$/u.test(t);
 };
 
 export const normalizeName = (name) => String(name ?? "").trim().replace(/\s+/g, " ");
@@ -106,3 +106,4 @@ export const PW_REQS = [
 ];
 export const missingPwReqs = (pw) => PW_REQS.filter(([, test]) => !test(pw || "")).map(([label]) => label);
 export const isStrongPassword = (pw) => missingPwReqs(pw).length === 0;
+
