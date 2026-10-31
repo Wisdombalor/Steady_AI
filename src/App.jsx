@@ -308,8 +308,8 @@ export default function App() {
       const active = storeRef.current;
       const local = active.userId === u.id ? active : loadAccountStore(u.id) || active;
       const next = migrate(resolveAccountStore(u, data?.data, local, freshStore));
-      next._revision = local.userId === u.id && local._pendingSync ? (local._revision || 0) : (data?.revision || 0);
-      if (local.userId === u.id && local._pendingSync && next._revision !== (data?.revision || 0)) { conflictRef.current = true; setSyncIssue("conflict"); }
+      next._revision = local.userId === u.id && (local._pendingSync || next._legacyConflict) ? (local._revision || 0) : (data?.revision || 0);
+      if (next._legacyConflict || (local.userId === u.id && local._pendingSync && next._revision !== (data?.revision || 0))) { conflictRef.current = true; setSyncIssue("conflict"); }
       storeRef.current = next;
       replaceAll(next);
       syncedUserId.current = u.id;
@@ -573,7 +573,7 @@ export default function App() {
   const syncNotice = (store._storageError || (user && (syncIssue || store._pendingSync))) ? (
     <div className="card sync-notice" role="status">
       {store._storageError ? "This browser couldn't save your progress. Free storage space before closing Steady." : syncIssue === "conflict"
-        ? "Your account has newer saved progress on another device. Your changes are safe on this device; choose which version to keep."
+        ? "Different saved progress was found in your account. Your changes are safe on this device; choose which version to keep."
         : syncIssue ? "Your changes are saved on this device but haven't synced yet." : "Saving your progress…"}
       {syncIssue === "failed" && <button className="chip" onClick={doPush}>Retry save</button>}
       {syncIssue === "conflict" && <button className="chip" onClick={() => open("syncConflict")}>Review saved progress</button>}

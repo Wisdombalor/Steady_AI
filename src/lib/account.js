@@ -8,7 +8,13 @@ export function resolveAccountStore(user, remote, local, freshStore) {
   // Guest recovery belongs to this device. Import it when creating an
   // account without cloud progress, but never import a different account.
   const guest = !local.userId && !local.email;
-  const saved = ownsLocal && local._pendingSync
+  const recoveryFields = ["name","bio","avatar","country","start","spend","cc","urges","periods","chats","trusted","hidden","rules","test","done","checks"];
+  const defaults = freshStore();
+  const hasProgress = local.start || local.urges?.length || local.checks?.length || local.chats?.length || local.trusted?.length;
+  // Older releases did not record pending saves or a server revision. A
+  // differing legacy snapshot needs an explicit choice, not a guessed winner.
+  const legacyConflict = !!(ownsLocal && local._revision == null && hasProgress && remote && recoveryFields.some((field) => JSON.stringify(local[field] ?? defaults[field]) !== JSON.stringify(remote[field] ?? defaults[field])));
+  const saved = ownsLocal && (local._pendingSync || legacyConflict)
     ? local
     : remote ?? (ownsLocal || guest ? local : {});
   const meta = user.user_metadata || {};
@@ -23,7 +29,8 @@ export function resolveAccountStore(user, remote, local, freshStore) {
     done: saved.done && (remote || ownsLocal || (saved.start && saved.name)) ? 1 : 0,
     posts: ownsLocal || (guest && !remote) ? local.posts || [] : [],
     outbox: ownsLocal || (guest && !remote) ? local.outbox || [] : [],
-    _pendingSync: !!(ownsLocal && local._pendingSync) || !remote,
+    _pendingSync: !!(ownsLocal && local._pendingSync) || legacyConflict || !remote,
+    _legacyConflict: legacyConflict,
   };
 }
 

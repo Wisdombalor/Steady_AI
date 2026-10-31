@@ -126,7 +126,7 @@ test("canceling support aborts the request without queueing it",async()=>{
 
 
 test("a conflict pauses automatic saves until the user chooses a version",()=>app({restored:true,revision:2,cloud:completed(),local:{...completed(),_revision:1,_pendingSync:true,checks:[{day:"2026-01-01",mood:5,urge:2,note:"Keep this edit"}]}},async a=>{
-  await a.home();await until(()=>a.text().includes("newer saved progress"));assert(!a.calls.some(call=>call.url.pathname.endsWith("/rpc/save_recovery_data")));
+  await a.home();await until(()=>a.text().includes("Different saved progress"));assert(!a.calls.some(call=>call.url.pathname.endsWith("/rpc/save_recovery_data")));
   await a.click("Review saved progress");await a.click("Keep this device's progress");await until(()=>a.stored()._pendingSync===false);assert.equal(a.stored().checks[0].note,"Keep this edit");assert.equal(a.stored()._revision,3);
 }));
 test("loading saved account data resolves a conflict only after explicit choice",()=>app({restored:true,revision:2,cloud:completed(),local:{...completed(),_revision:1,_pendingSync:true,checks:[{day:"2026-01-01",mood:5,urge:2,note:"Unsynced"}]}},async a=>{
@@ -136,3 +136,11 @@ test("publishing a local post creates a real server record",()=>app({restored:tr
   await a.home();await a.click("Community");await a.click("Make public");await until(()=>a.stored().posts.some(post=>post.id==="server-post"));
   assert(a.calls.some(call=>call.url.pathname.endsWith("/posts")&&call.method==="POST"&&call.payload.visibility==="community"));assert(!a.stored().posts.some(post=>post.id==="p100"));
 }));
+
+
+test("upgrading an older release preserves unmarked local edits and asks which snapshot to keep",async()=>{
+  const legacy={...completed(),checks:[{day:"2026-01-01",mood:5,urge:2,note:"Legacy unsynced note"}]};delete legacy._revision;delete legacy._pendingSync;
+  await app({restored:true,cloud:completed(),local:legacy},async a=>{
+    await a.home();await until(()=>a.text().includes("Different saved progress"));assert.equal(a.stored().checks[0].note,"Legacy unsynced note");assert(!a.calls.some(call=>call.url.pathname.endsWith("/rpc/save_recovery_data")));
+  });
+});
